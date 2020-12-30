@@ -188,12 +188,6 @@ ceden.wq.sf <- st_join(ceden.wq, USFE.riskregions["Subregion"])
 ceden.wq.sf <- ceden.wq.sf %>%
   filter(!is.na(Subregion))
 
-
-#plotting
-
-library(RColorBrewer)
-library(ggplot2)
-
 # Basic plot
 ggplot() +
   geom_sf(data = USFE.riskregions) +
@@ -306,8 +300,8 @@ tibble(wq.stations)
 wq.stations <- st_transform(wq.stations, 26910)
 st_crs(wq.stations)
 
-st.df.u10 <- st_transform(st.df, 26910)
-st_crs(st.df.u10)
+#st.df.u10 <- st_transform(st.df, 26910)
+#st_crs(st.df.u10)
 
 rr.u10 <- st_transform(USFE.riskregions, 26910)
 st_crs(st.df.u10)
@@ -351,17 +345,12 @@ ggplot() +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
   ggtitle("Ceden Benthic Data with WQ on same date")
 
-
-com.dates[] <- Map(function(x) replace(x, is.infinite(x), NA), com.dates)
-com.dates[mapply(is.infinite, com.dates)] <- NA
-
+### Change infinities and NaN values to NA
 com.dates <- com.dates %>% 
   mutate_if(is.numeric, list(~na_if(., Inf))) %>% 
   mutate_if(is.numeric, list(~na_if(., -Inf))) %>%
+  mutate_if(is.numeric, list(~na_if(., "NaN"))) %>%
   mutate_if(is.numeric, list(~na_if(., NaN)))
-
-
-is.na(com.dates) <- sapply(com.dates, is.infinite)
 
 write.csv(com.dates, "data/ceden_benthic_WQ.csv")
 
@@ -401,7 +390,7 @@ ceden.sel <- st_set_geometry(ceden.sel, NULL)
 
 ceden.sel[4:8] <- lapply(ceden.sel[,4:8], as.numeric)
 
-ceden.cor <- correlation.matrix(ceden.sel[, c(4:20)], method="kendall")
+ceden.cor <- correlation.matrix(ceden.sel[, c(4:8)], method="kendall")
 ceden.cor
 
 write.table(ceden.cor$statistics, "cedencorSTATS.csv",
