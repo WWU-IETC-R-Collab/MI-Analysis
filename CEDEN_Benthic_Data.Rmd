@@ -1,0 +1,63 @@
+---
+title: "CEDEN Benthic Data"
+author: "Eric Lawrence"
+date: "12/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## CEDEN Data 
+
+This document covers the data analysis for the benthic macroinvertebrate dataset obtained from the CEDEN Advanced Query Tool: 
+
+    https://ceden.waterboards.ca.gov/AdvancedQueryTool
+
+I downloaded the CEDEN Benthic data with the following parameters:
+
+   Region selection by County: Contra Costa, Sacramento, San Joaquin, Solano, and Yolo.
+
+   Date Range: 1/1/2010 to 6/19/2019 (latest available date).
+
+I also used the CEDEN water quality data from the Tox Box accessed on 12/13/2020:
+
+   Z:\\Upper San Francisco Project\\Data & Analyses\\Year 2\\CEDEN Files by Topic\\CEDEN Water WQ Data.xlsx
+
+## Risk Regions
+   
+To assign risk regions to the data with spatial coordinates, I used the RiskRegions_DWSC_Update_9292020.shp shapefile obtained from the Tox Box.
+
+
+## Load in libraries and data
+
+```{r libraries and data}
+
+library(tidyverse)
+library(sf)
+library(here)
+library(readxl)
+
+USFE.riskregions <- here("data/RiskRegions_DWSC_Update_9292020.shp") %>% # path relative to main directory
+  st_read()
+
+st_crs(USFE.riskregions)
+
+crs.WGS84 <- st_crs(USFE.riskregions)
+
+
+#### Load in CEDEN data
+
+CEDEN <- read_excel("data/ceden_data_edited.xlsx")
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
