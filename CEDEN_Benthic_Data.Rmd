@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo =TRUE)
 ```
 
 ## CEDEN Data 
@@ -52,12 +52,3 @@ crs.WGS84 <- st_crs(USFE.riskregions)
 CEDEN <- read_excel("data/ceden_data_edited.xlsx")
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
