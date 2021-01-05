@@ -370,6 +370,48 @@ ceden.sel <- com.dates %>%
          mean_Temp, mean_Turb, mean_Vel
          
          )
+tibble(ceden.sel)
+
+
+
+########## Correlation between env variables
+
+env <- ceden.sel %>%
+  select(StationCode, SampleDate, Subregion.x, mean_Alk, mean_DO, mean_pH, mean_Sal, mean_Secc, mean_Cond,
+         mean_Temp, mean_Turb, mean_Vel)
+
+env$Subregion.x <- as.factor(env$Subregion.x)
+
+tibble(env)
+
+plot(env)
+
+par(mfrow = c(3,3), mar=c(9,1,1,1))
+
+names <- colnames(env)
+
+for (i in 4:12) {
+  
+  x <- env[,i, drop = TRUE]
+  
+  boxplot(x ~ env$Subregion.x,
+          ylab = paste(names[i]),
+          las = 0.5
+          )
+}
+
+env[,4]
+
+boxplot(env$mean_Alk ~ env$Subregion.x)
+
+boxplot(env[,4] ~ env$Subregion.x)
+
+env$mean_Alk
+
+plot(ceden.sel[,4:10])
+plot(ceden.sel[,10:22])
+plot(ceden.sel[,33:41])
+
 
 boxplot(ceden.sel$n_taxa ~ ceden.sel$Subregion.x)
 boxplot(ceden.sel$EPT_taxa ~ ceden.sel$Subregion.x)
@@ -404,7 +446,7 @@ cor <- ceden.sel %>%
 
 cor(ceden.sel[,c(4:6)])
 
-ceden.cor <- correlation.matrix(as.matrix(cor[, c(2:40)]), method="kendall")
+ceden.cor <- correlation.matrix(as.matrix(cor[, c(2:6)]), method="kendall")
 
 correlation.matrix(c(cor$n_taxa), method = "kendall")
 
@@ -423,6 +465,8 @@ source("riffle02.r")
 sink("riffleRESULTS.txt")
 riffleNR = riffle(ceden.sel[, c(4:41)], 3, numreps=5)
 print(riffleNR)
+sink()
+
 
 print(table(wine$type, riffleNR$cluster))
 print(chisq.test(wine$type[wine$type!="unk"],
