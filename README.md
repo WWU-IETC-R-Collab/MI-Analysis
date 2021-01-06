@@ -8,5 +8,3 @@ Data manipulation and statistical analysis for macroinvertebrate data.
 [ceden.R](ceden.R) - Benthic macroinvertebrate data manipulation and multivariate analysis for data from the CEDEN dataset.
 
 [zoop_dataexploration.R](zoop_dataexploration.R) Planktonic macroinvertebrate data manipulation for data from the ZOOP dataset.
-
-Skyler was here!
