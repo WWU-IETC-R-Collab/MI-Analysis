@@ -300,8 +300,8 @@ tibble(wq.stations)
 wq.stations <- st_transform(wq.stations, 26910)
 st_crs(wq.stations)
 
-#st.df.u10 <- st_transform(st.df, 26910)
-#st_crs(st.df.u10)
+st.df.u10 <- st_transform(st.df, 26910)
+st_crs(st.df.u10)
 
 rr.u10 <- st_transform(USFE.riskregions, 26910)
 st_crs(st.df.u10)
@@ -354,7 +354,13 @@ com.dates <- com.dates %>%
 
 write.csv(com.dates, "data/ceden_benthic_WQ.csv")
 
+
+
+#################################################################
 ############### CEDEN Analysis
+#################################################################
+
+#Create dataframe with selected variables
 
 ceden.sel <- com.dates %>%
   select(StationCode, SampleDate, Subregion.x, n_taxa, n_E,
@@ -376,6 +382,7 @@ tibble(ceden.sel)
 
 ########## Correlation between env variables
 
+# Create dataframe with only environmental variables
 env <- ceden.sel %>%
   select(StationCode, SampleDate, Subregion.x, mean_Alk, mean_DO, mean_pH, mean_Sal, mean_Secc, mean_Cond,
          mean_Temp, mean_Turb, mean_Vel)
@@ -386,7 +393,7 @@ tibble(env)
 
 plot(env)
 
-par(mfrow = c(3,3), mar=c(9,1,1,1))
+par(mfrow = c(3,3), mar=c(3,5,3,3))
 
 names <- colnames(env)
 
@@ -400,21 +407,51 @@ for (i in 4:12) {
           )
 }
 
-env[,4]
 
-boxplot(env$mean_Alk ~ env$Subregion.x)
+## Dataframe with just counts
 
-boxplot(env[,4] ~ env$Subregion.x)
+taxa <- ceden.sel %>%
+  select(StationCode, SampleDate, Subregion.x, n_Arthropoda, n_Annelida, 
+         n_Nematoda, n_Ectoprocta, n_Bacillariophyta,
+         n_Cryptophyta, n_Heterokontophyta, n_Ochrophyta,
+         n_Coelenterata, n_Nemertea, n_Mollusca, n_Platyhelminthes,
+         n_Bryozoa, n_Cyanobacteria, n_Chlorophyta, n_Euglenozoa,
+         n_Streptophyta, n_Rhodophyta, n_Chordata)
 
-env$mean_Alk
+taxa <- st_set_geometry(taxa, NULL)
+tibble(taxa)
+taxa
 
-plot(ceden.sel[,4:10])
-plot(ceden.sel[,10:22])
-plot(ceden.sel[,33:41])
+taxa.df <- as.data.frame(taxa)
 
+taxa.cor <- correlation.matrix(taxa.df[,4:22])
+taxa.cor
+
+write.table(taxa.cor$statistics, "taxacorSTATS.csv",
+            row.names=T, col.names=NA, sep=",")
+write.table(taxa.cor$p.values, "taxacorPVALUES.csv",
+            row.names=T, col.names=NA, sep=",")
+
+
+# Correlation Matrix
+
+source("correlation.r")
+tibble(env)
+
+env <- st_set_geometry(env, NULL)
+env[,4:12] <- lapply(env[,4:12], as.numeric)
+
+env.df <- as.data.frame(env)
+env.cor <- correlation.matrix(env.df[,c(4:12)], method="pearson")
+ceden.cor
+
+env[,c(4:12)]
+env[[4:5]]
 
 boxplot(ceden.sel$n_taxa ~ ceden.sel$Subregion.x)
 boxplot(ceden.sel$EPT_taxa ~ ceden.sel$Subregion.x)
+
+# Scatterplots
 
 plot(ceden.sel$n_taxa ~ ceden.sel$mean_Temp)
 plot(ceden.sel$n_taxa ~ ceden.sel$mean_DO)
@@ -423,6 +460,8 @@ plot(ceden.sel$n_taxa ~ ceden.sel$mean_Sal)
 plot(ceden.sel$n_taxa ~ ceden.sel$mean_Cond)
 plot(ceden.sel$n_taxa ~ ceden.sel$mean_Turb)
 plot(ceden.sel$n_taxa ~ ceden.sel$mean_Alk)
+
+
 
 ################# Correlation Analysis
 
@@ -456,7 +495,107 @@ install.packages("Hmisc")
 library(Hmisc)
 
 ceden.cor <- cor(ceden.sel[,4:40])
-rcorr(as.matrix(ceden.sel[,4:6]))
+
+cs.df <- as.data.frame(ceden.sel)
+
+
+
+rcorr(as.matrix(cs.df[,4:6]))
+
+rcorr(as.matrix(cs.df[,4:40]))
+
+############################# NMDS
+
+library(vegan)
+
+taxa$Subregion.x <- as.factor(taxa$Subregion.x)
+
+v.dist <- vegdist(taxa[4:22])
+v.dist
+
+nmds <- metaMDS(v.dist)
+nmds
+
+stressplot(nmds, v.dist)
+
+plot(nmds, type = "t", main = "MOTUs per site")
+
+tibble(taxa)
+
+colvec <- c("cyan2", "gold", "red", "blue")
+plot(nmds, type = "n", main = "NMDS Benthic MI by Risk Region")
+with(taxa, points(nmds, display = "sites", col = colvec[Subregion.x],
+                  pch = 21, bg = colvec[Subregion.x]))
+with(taxa, legend("topleft", legend = levels(Subregion.x), bty = "n", col = colvec, pch = 21, pt.bg = colvec))
+text(0.4, 0.33, paste("stress =",format(nmds$stress,digits=2)), cex = 0.7)
+
+
+est <- as.factor(taxa$Subregion.x)
+results <- (anosim(v.dist, grouping = est))
+summary(results)
+plot(results, ylab = "Ranked dissimilarity")
+
+### nmds on centroids
+
+taxa <- taxa %>%
+  mutate(site = paste(StationCode, SampleDate))
+
+centroid = betadisper(v.dist, taxa$StationCode)$centroids
+dist_centroid=vegdist(centroid, "euc")
+
+mds_centroid <- metaMDS(dist_centroid)
+
+plot(mds_centroid, type = "t", main = "Polygon Centroids of Sites Plotted")
+
+## WQ Data, create new dataframe with only the variables that have enough data to be included
+# Create dataframe with only environmental variables
+env <- ceden.sel %>%
+  select(StationCode, SampleDate, Subregion.x, mean_DO, mean_pH, mean_Cond,
+         mean_Temp,)
+
+env <- st_set_geometry(env, NULL)
+
+env$Subregion.x <- as.factor(env$Subregion.x)
+env
+
+rankindex(scale(env[4:7]), centroid, c("euc","man"))
+
+vare.pca <- rda(taxa[4:22])
+vare.pca
+
+plot(vare.pca)
+
+biplot(vare.pca, scaling = -1)
+
+
+
+
+
+env <- as.data.frame(env)
+
+ef <- envfit(mds_centroid, env[4:7], na.rm = TRUE, permutations = 999)
+ef
+
+scores(ef, "vectors")
+
+plot(mds_centroid, type = "t", sclae = -1)
+plot(ef, scale = -1)
+
+plot(mds_centroid, type = "n", main = "NMDS for Site Centroids", scale = -1)
+with(taxa, points(mds_centroid, display = "sites", col = colvec[Subregion.x],
+                  pch = 21, bg = colvec[Subregion.x]))
+with(taxa, legend("topright", legend = levels(Subregion.x), bty = "n", col = colvec, pch = 21, pt.bg = colvec))
+text(0.4, 0.33, paste("stress =",format(nmds$stress,digits=2)), cex = 0.7)
+
+
+
+
+
+
+###################################################################
+#################################################################
+
+
 
 ## Riffle
 
@@ -471,3 +610,35 @@ sink()
 print(table(wine$type, riffleNR$cluster))
 print(chisq.test(wine$type[wine$type!="unk"],
                  riffleNR$cluster[wine$type!="unk"]))
+
+##### STEP 1 - run nonmetric clustering using riffle02,
+#####          saving the results using sink()
+sink("riffleRESULTS.txt")
+riffleNR = riffle(wine[, c(2:14)], 3, numreps=5)
+print(riffleNR)   ### This prints the riffle cluster information
+
+# (add syntax for remaining random files; use different object names
+# for the four nonmetric clustering runs)
+
+
+##### STEP 2 - print/save the association analysis results
+print(table(type, riffleNR$cluster))
+print(chisq.test(type[type!="unk"], 
+                 riffleNR$cluster[type!="unk"]))
+sink()
+
+##### STEP 3 - plot the results using best PRE scores (not these!)
+op=par(mfrow=c(2,2))
+plot(ash, alk, main="Riffle Clustering, 3 groups",
+     xlab = "Ash", xlim=c(1, 4),
+     ylab = "Alk", ylim=c(10, 30),
+     pch=unclass(wine$type), # symbols show Type
+     cex=0.7,                # makes symbols slightly smaller
+     col=riffleNR$cluster)    # colors show riffle clusters
+legend(x="bottomright", 
+       c("Type A", "Type B", "Type C", "unk"),
+       pch=c(1:4), bty="n", adj=c(0,0.5))
+legend(x="topleft", 
+       c("Cluster 1", "Cluster 2", "Cluster 3"),
+       fill=c(1:3), bty="n", adj=c(0,0.5))
+# (add syntax to plot the remaining random files)
