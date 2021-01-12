@@ -13,6 +13,8 @@ output:
 knitr::opts_chunk$set(echo =TRUE, warning = FALSE, message = FALSE)
 ```
 
+Example text yay
+
 ## CEDEN Data 
 
 This document covers the data analysis for the benthic macroinvertebrate dataset obtained from the CEDEN Advanced Query Tool: 
