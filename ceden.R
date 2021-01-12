@@ -352,6 +352,8 @@ com.dates <- com.dates %>%
   mutate_if(is.numeric, list(~na_if(., "NaN"))) %>%
   mutate_if(is.numeric, list(~na_if(., NaN)))
 
+com.dates <- st_set_geometry(com.dates, NULL)
+
 write.csv(com.dates, "data/ceden_benthic_WQ.csv")
 
 
@@ -509,7 +511,9 @@ rcorr(as.matrix(cs.df[,4:40]))
 library(vegan)
 
 taxa$Subregion.x <- as.factor(taxa$Subregion.x)
+#taxa[,4:22] <- lapply(as.numeric(taxa[,4:22]))
 
+taxa[4:22] <- lapply(taxa[,4:22], as.numeric)
 v.dist <- vegdist(taxa[4:22])
 v.dist
 
@@ -558,7 +562,7 @@ env <- st_set_geometry(env, NULL)
 env$Subregion.x <- as.factor(env$Subregion.x)
 env
 
-rankindex(scale(env[4:7]), centroid, c("euc","man"))
+#rankindex(scale(env[4:7]), centroid, c("euc","man"))
 
 vare.pca <- rda(taxa[4:22])
 vare.pca
@@ -568,26 +572,27 @@ plot(vare.pca)
 biplot(vare.pca, scaling = -1)
 
 
+#mds_centroid
+#env[4:7]
 
+#env <- as.data.frame(env)
 
+#ef <- envfit(mds_centroid, env[4:7], na.rm = TRUE, permutations = 999)
+#ef
 
-env <- as.data.frame(env)
-
-ef <- envfit(mds_centroid, env[4:7], na.rm = TRUE, permutations = 999)
+ef <- envfit(nmds, env[4:7], na.rm = TRUE, permutations = 999)
 ef
 
 scores(ef, "vectors")
 
-plot(mds_centroid, type = "t", sclae = -1)
+plot(nmds, type = "t", scale = -1)
 plot(ef, scale = -1)
 
-plot(mds_centroid, type = "n", main = "NMDS for Site Centroids", scale = -1)
-with(taxa, points(mds_centroid, display = "sites", col = colvec[Subregion.x],
+plot(nmds, type = "n", main = "NMDS for Sites with WQ vectors", scale = -1)
+with(taxa, points(nmds, display = "sites", col = colvec[Subregion.x],
                   pch = 21, bg = colvec[Subregion.x]))
 with(taxa, legend("topright", legend = levels(Subregion.x), bty = "n", col = colvec, pch = 21, pt.bg = colvec))
 text(0.4, 0.33, paste("stress =",format(nmds$stress,digits=2)), cex = 0.7)
-
-
 
 
 

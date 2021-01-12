@@ -1,0 +1,123 @@
+---
+title: "MI Mutlivariate Analysis"
+author: "Eric Lawrence"
+date: "1/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load in libraries and data
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+
+library(tidyverse)
+library(sf)
+library(here)
+library(readxl)
+library(vegan)
+
+#Load in combined benthic sampling and water quality data
+com.dates <- read.csv("data/ceden_benthic_WQ.csv")
+```
+
+## Prepare data
+
+```{r, echo = TRUE, warning=FALSE, message=FALSE}
+#Create dataframe with selected variables
+
+ceden.sel <- com.dates %>%
+  select(StationCode, SampleDate, Subregion.x, n_taxa, n_E,
+         n_P, n_T, n_O, n_D, n_Arthropoda, n_Annelida, 
+         n_Nematoda, n_Ectoprocta, n_Bacillariophyta,
+         n_Cryptophyta, n_Heterokontophyta, n_Ochrophyta,
+         n_Coelenterata, n_Nemertea, n_Mollusca, n_Platyhelminthes,
+         n_Bryozoa, n_Cyanobacteria, n_Chlorophyta, n_Euglenozoa,
+         n_Streptophyta, n_Rhodophyta, n_Chordata, EPT_taxa, EPT_index,
+         ETO_taxa, ETO_index,
+         
+         mean_Alk, mean_DO, mean_pH, mean_Sal, mean_Secc, mean_Cond,
+         mean_Temp, mean_Turb, mean_Vel
+         
+         )
+
+#Set subregion as a factor
+ceden.sel$Subregion.x <- as.factor(ceden.sel$Subregion.x)
+
+### Create dataframe with just taxa counts for by Phylums
+taxa <- ceden.sel %>%
+  select(StationCode, SampleDate, Subregion.x, n_Arthropoda, n_Annelida, 
+         n_Nematoda, n_Ectoprocta, n_Bacillariophyta,
+         n_Cryptophyta, n_Heterokontophyta, n_Ochrophyta,
+         n_Coelenterata, n_Nemertea, n_Mollusca, n_Platyhelminthes,
+         n_Bryozoa, n_Cyanobacteria, n_Chlorophyta, n_Euglenozoa,
+         n_Streptophyta, n_Rhodophyta, n_Chordata)
+
+## WQ Data, create new dataframe with only the variables that have enough data to be included
+env <- ceden.sel %>%
+  select(StationCode, SampleDate, Subregion.x, mean_DO, mean_pH, mean_Cond, mean_Temp,)
+
+```
+
+## NMDS
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+
+v.dist <- vegdist(taxa[4:22])
+
+nmds <- metaMDS(v.dist)
+nmds
+
+stressplot(nmds, v.dist)
+
+plot(nmds, type = "t", main = "NMDS for Each Sample")
+
+colvec <- c("cyan2", "gold", "red", "blue")
+plot(nmds, type = "n", main = "NMDS Benthic MI by Risk Region")
+with(taxa, points(nmds, display = "sites", col = colvec[Subregion.x],
+                  pch = 21, bg = colvec[Subregion.x]))
+with(taxa, legend("topright", legend = levels(Subregion.x), bty = "n", col = colvec, pch = 21, pt.bg = colvec))
+
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+est <- as.factor(taxa$Subregion.x)
+results <- (anosim(v.dist, grouping = est))
+summary(results)
+plot(results, ylab = "Ranked dissimilarity")
+```
+
+## WQ Vectors
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+vare.pca <- rda(taxa[4:22])
+vare.pca
+
+plot(vare.pca)
+
+biplot(vare.pca, scaling = -1)
+
+```
+
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+
+
+env <- as.data.frame(env)
+
+ef <- envfit(nmds, env[4:7], na.rm = TRUE, permutations = 999)
+ef
+
+scores(ef, "vectors")
+
+plot(nmds, type = "t", scale = -1)
+plot(ef, scale = -1)
+
+plot(nmds, type = "n", main = "NMDS with WQ vectors", scale = -1)
+with(taxa, points(nmds, display = "sites", col = colvec[Subregion.x],
+                  pch = 21, bg = colvec[Subregion.x]))
+with(taxa, legend("topright", legend = levels(Subregion.x), bty = "n", col = colvec, pch = 21, pt.bg = colvec))
+plot(ef, scale = -1)
+```
