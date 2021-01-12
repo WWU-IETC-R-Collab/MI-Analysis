@@ -2,7 +2,11 @@
 title: "MI Mutlivariate Analysis"
 author: "Eric Lawrence"
 date: "1/11/2021"
-output: html_document
+output:
+  html_document:
+    code_folding: show
+    code_download: true
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE, warning=FALSE, message=FALSE}
