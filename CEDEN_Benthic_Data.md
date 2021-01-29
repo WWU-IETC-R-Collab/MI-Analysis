@@ -31,6 +31,25 @@ I also used the CEDEN water quality data from the Tox Box accessed on 12/13/2020
    
 To assign risk regions to the data with spatial coordinates, I used the RiskRegions_DWSC_Update_9292020.shp shapefile obtained from the Tox Box.
 
+## Inputs
+
+CEDEN Benthic excel file with some edits for making it easier to load into R
+
+/data/ceden_data_edited.xlsx
+
+CEDEN Water Quality data, also with formatting edits from raw data
+
+data/ceden_wq.xlsx
+
+## Output
+
+Table for CEDEN Benthic Data with Risk Regions added:
+
+/data/output_tables/ceden_with_RR.csv
+
+Table that has CEDEN Benthic data and Water Quality data combined based on spatial and temporal analysis:
+
+/data/output_tables/ceden_benthic_WQ.csv
 
 ## Load in libraries and data
 
@@ -122,7 +141,7 @@ ggplot() +
 ```r
 # Write table
 
-write.csv(ceden.all.sf, "data/ceden_with_RR.csv")
+write.csv(ceden.all.sf, "data/output_tables/ceden_with_RR.csv")
 ```
 
 # Analysis
@@ -195,7 +214,7 @@ tibble(samp.df)
 ```
 ## # A tibble: 160 x 37
 ##    StationCode SampleDate          Subregion StationName Project Projectcode
-##    <chr>       <dttm>              <fct>     <chr>       <chr>   <chr>      
+##    <chr>       <dttm>              <chr>     <chr>       <chr>   <chr>      
 ##  1 510CR0036   2018-06-18 00:00:00 Sacramen~ Sacramento~ Nation~ EPA_NRSA_2~
 ##  2 510CR0322   2018-06-20 00:00:00 Sacramen~ Miner Slou~ Nation~ EPA_NRSA_2~
 ##  3 510CR1007   2013-06-03 00:00:00 Sacramen~ Sacramento~ Nation~ EPA_NRSA_2~
@@ -402,7 +421,7 @@ tibble(wq.stations)
 ```
 ## # A tibble: 2,132 x 66
 ##    StationName SampleDate.wq       Project     n Subregion n_Alk mean_Alk sd_Alk
-##    <chr>       <dttm>              <chr>   <int> <fct>     <int>    <dbl>  <dbl>
+##    <chr>       <dttm>              <chr>   <int> <chr>     <int>    <dbl>  <dbl>
 ##  1 209-6T      2014-02-28 00:00:00 CA Dep~     2 South De~     0       NA     NA
 ##  2 209-6T      2014-03-26 00:00:00 CA Dep~     2 South De~     0       NA     NA
 ##  3 209-6T      2015-04-07 00:00:00 CA Dep~     2 South De~     0       NA     NA
@@ -479,6 +498,13 @@ samp.wq.com <- st_join(samp.df.u10, wq.stations.buffer, left = TRUE)
 ### Select records that have sampling data from the same date for benthic and WQ
 com.dates <- samp.wq.com %>%
   filter(SampleDate == SampleDate.wq)
+
+### Change infinities and NaN values to NA
+com.dates <- com.dates %>% 
+  mutate_if(is.numeric, list(~na_if(., Inf))) %>% 
+  mutate_if(is.numeric, list(~na_if(., -Inf))) %>%
+  mutate_if(is.numeric, list(~na_if(., "NaN"))) %>%
+  mutate_if(is.numeric, list(~na_if(., NaN)))
 ```
 
 
@@ -501,7 +527,7 @@ tibble(com.dates)
 ```
 ## # A tibble: 64 x 102
 ##    StationCode SampleDate          Subregion.x StationName.x Project.x
-##    <chr>       <dttm>              <fct>       <chr>         <chr>    
+##    <chr>       <dttm>              <chr>       <chr>         <chr>    
 ##  1 510STODWx   2014-06-18 00:00:00 Sacramento~ Stone Lakes   EPA 104b~
 ##  2 543R00137   2012-05-15 00:00:00 Confluence  Deer Cr_137-~ CCCWP Cr~
 ##  3 543R01103   2015-04-21 00:00:00 Confluence  West Antioch~ CCCWP Cr~
@@ -522,7 +548,7 @@ tibble(com.dates)
 ## #   n_Euglenozoa <int>, n_Streptophyta <int>, n_Rhodophyta <int>,
 ## #   n_Chordata <int>, geometry <POINT [m]>, EPT_taxa <int>, EPT_index <dbl>,
 ## #   ETO_taxa <int>, ETO_index <dbl>, StationName.y <chr>, SampleDate.wq <dttm>,
-## #   Project.y <chr>, n <int>, Subregion.y <fct>, n_Alk <int>, mean_Alk <dbl>,
+## #   Project.y <chr>, n <int>, Subregion.y <chr>, n_Alk <int>, mean_Alk <dbl>,
 ## #   sd_Alk <dbl>, min_Alk <dbl>, max_Alk <dbl>, n_N <int>, mean_N <dbl>,
 ## #   sd_N <dbl>, min_N <dbl>, max_N <dbl>, n_Chl_F <int>, mean_Chl_F <dbl>,
 ## #   sd_Chl_F <dbl>, min_Chl_F <dbl>, max_Chl_F <dbl>, n_Chl_TR <int>,
@@ -539,7 +565,15 @@ tibble(com.dates)
 ```
 
 
-## Analysis
+## Remove Geometry and Save csv
+
+
+```r
+### Remove geographic coordinates
+com.dates <- st_set_geometry(com.dates, NULL)
+
+write.csv(com.dates, "data/output_tables/ceden_benthic_WQ.csv")
+```
 
 
 

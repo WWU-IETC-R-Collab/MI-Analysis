@@ -33,6 +33,25 @@ I also used the CEDEN water quality data from the Tox Box accessed on 12/13/2020
    
 To assign risk regions to the data with spatial coordinates, I used the RiskRegions_DWSC_Update_9292020.shp shapefile obtained from the Tox Box.
 
+## Inputs
+
+CEDEN Benthic excel file with some edits for making it easier to load into R
+
+/data/ceden_data_edited.xlsx
+
+CEDEN Water Quality data, also with formatting edits from raw data
+
+data/ceden_wq.xlsx
+
+## Output
+
+Table for CEDEN Benthic Data with Risk Regions added:
+
+/data/output_tables/ceden_with_RR.csv
+
+Table that has CEDEN Benthic data and Water Quality data combined based on spatial and temporal analysis:
+
+/data/output_tables/ceden_benthic_WQ.csv
 
 ## Load in libraries and data
 
@@ -120,7 +139,7 @@ ggplot() +
 
 # Write table
 
-write.csv(ceden.all.sf, "data/ceden_with_RR.csv")
+write.csv(ceden.all.sf, "data/output_tables/ceden_with_RR.csv")
 
 
 ```
@@ -427,6 +446,13 @@ samp.wq.com <- st_join(samp.df.u10, wq.stations.buffer, left = TRUE)
 com.dates <- samp.wq.com %>%
   filter(SampleDate == SampleDate.wq)
 
+### Change infinities and NaN values to NA
+com.dates <- com.dates %>% 
+  mutate_if(is.numeric, list(~na_if(., Inf))) %>% 
+  mutate_if(is.numeric, list(~na_if(., -Inf))) %>%
+  mutate_if(is.numeric, list(~na_if(., "NaN"))) %>%
+  mutate_if(is.numeric, list(~na_if(., NaN)))
+
 ```
 
 ```{r, echo=TRUE}
@@ -442,7 +468,16 @@ tibble(com.dates)
 ```
 
 
-## Analysis
+## Remove Geometry and Save csv
+
+```{r, echo=TRUE, results='hide'}
+
+### Remove geographic coordinates
+com.dates <- st_set_geometry(com.dates, NULL)
+
+write.csv(com.dates, "data/output_tables/ceden_benthic_WQ.csv")
+
+```
 
 
 
