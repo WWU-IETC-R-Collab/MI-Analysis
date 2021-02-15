@@ -1,0 +1,142 @@
+---
+title: "MI WQ Spatial Join"
+author: "Erika W"
+date: "2/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Start with all objects from CEDEN_Benthic_Data_WBD.rmd in global environment (Open that rmd and choose "run all chunks")
+
+Then remove all extra objects from working directory
+```{r}
+rm(list=setdiff(ls(), c("samp.df.u10", "wq.stations", "USFE.riskregions", "st.df.u10")))
+```
+
+## ALTERNATIVE: Join Datasets Using Nearest Neighbor
+
+### Transform Projection to UTM Zone 10n
+
+This transform allows us to compare distances and create buffers. I created a 500 meter buffer around each water quality sampling station.
+
+```{r, echo=TRUE, results='hide'}
+
+####### Transform into projection to compare distance
+
+# Transform into UTM Zone 10n EPSG:26910
+wq.stations <- st_transform(wq.stations, 26910)
+st.df.u10 <- st_transform(st.df, 26910)
+rr.u10 <- st_transform(USFE.riskregions, 26910)
+samp.df.u10 <- st_transform(samp.df, 26910)
+```
+
+### Plot WQ and ceden benthic data
+
+```{r, echo=TRUE}
+ggplot() +
+  geom_sf(data = USFE.riskregions) +
+  geom_sf(data = wq.stations, aes(color = Subregion)) +
+  scale_color_brewer(palette = "Set1") + # not color-blind safe
+  geom_sf(data = st.df.u10) +
+  ggtitle("Ceden WQ Stations and MI Sampling Locations") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+### Join Datasets Using Nearest Neighbor
+
+This nested loop subsets each dataset for unique dates, then runs nearest neighbor analysis within data of each date, and appends the distance between datapoints onto the matrix. The "If" loop allows the "For" loop to bypass MI sample dates for which there are no WQ samples on the same date.
+
+Unfortunately, I get the error "Error: cannot allocate vector of size 11.2 Gb" when I try to run this, so I'm looking into ways to increase the memory limit.
+
+Going to add an ID column to each dataframe (which maybe was in the original data, but since this project uses an already edited excel, not ID columns exist), and then run this process using just ID's and primary columns, omitting sample data that can be joined back on later.
+
+```{r}
+# New issue with real data = memory limit
+# “Error: cannot allocate vector of size 11.2 Gb”
+# Trying solution from:
+# https://statisticsglobe.com/r-error-cannot-allocate-vector-of-size-n-gb
+
+memory.limit() # currently at 16290
+memory.limit(35000) # Run this if run into memory limits
+
+# Add back on ID labels for each date:location combo
+samp.df.u10$ID.benthic <- c(1:length(samp.df.u10$StationCode)) # Gives ID's from 1:160
+wq.stations$ID.wq <- c(161: c(160+length(wq.stations$SampleDate.wq))) # Gives ID's 161+
+
+
+# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails, try selecting a minimum of columns to reduce working memory.
+A <- samp.df.u10
+  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, SampleDate, geometry))
+B <- wq.stations
+  #select(wq.stations, c(ID.wq, StationName,SampleDate.wq))
+```
+
+First, testing the process using a single date (one example [i])
+
+```{r}
+##### Loop Prep
+Dates<- unique(A$SampleDate) # Make vector with only unique dates (n=56)
+
+JoinResult <- vector("list") # save empty list where output from each day's join will be saved
+
+i<- 35
+  A_Sub <- A %>% filter(SampleDate == Dates[i])
+  B_Sub <- B %>% filter(SampleDate.wq == Dates[i])
+  if (nrow(B_Sub)>0){
+  distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
+  SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
+  SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
+  JoinResult<- SubResult} # It works.
+
+# Remove practice objects before running real loop
+rm(i, A_Sub, B_Sub, distList, SubResult, JoinResult)
+```
+
+Now, running the loop for real.
+
+```{r}
+##### Loop Prep
+Dates<- unique(A$SampleDate) # Make vector with only unique dates
+
+JoinResult <- vector("list") # save empty list where output from each day's join will be saved
+
+for (i in 1:56){
+  A_Sub <- A %>% filter(SampleDate == Dates[i])
+  B_Sub <- B %>% filter(SampleDate.wq == Dates[i])
+  if (nrow(B_Sub)>0){
+  distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
+  SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
+  SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
+  JoinResult[[i]] <- SubResult}
+  }
+
+NN_Results <- do.call(rbind, JoinResult) # Results in 79 matches
+```
+
+There were 79 total Benthic samples with WQ samples on the same date. 
+
+Plotting the resulting benthic locations with colors from the nearest WQ sites, it's apparent that some were pulled with WQ data from across subregion boundaries
+
+```{r, echo=TRUE}
+### Plot benthic sampling locations that has WQ available on the same date
+
+ggplot() +
+  geom_sf(data = USFE.riskregions) +
+  geom_sf(data = NN_Results, aes(color = Subregion.y)) +
+  scale_color_brewer(palette = "Set1") +
+  ggtitle("Ceden Benthic Data with WQ on same date")
+
+```
+
+If we filter to make sure only pairs from within the same HUC12 watershed boundaries are retained, we are left with only 59 records.
+
+```{r}
+NN_HUC <- NN_Results %>% filter(HUC12.x == HUC12.y)
+```
+
+

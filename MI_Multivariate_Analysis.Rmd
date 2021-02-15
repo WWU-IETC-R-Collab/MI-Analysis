@@ -24,7 +24,9 @@ library(readxl)
 library(vegan)
 
 #Load in combined benthic sampling and water quality data
-com.dates <- read.csv("data/ceden_benthic_WQ.csv")
+com.dates <- read_csv("data/ceden_benthic_WQ.csv") # Erik's original datafram with only 64 observations
+#com.dates <- read_csv("data/ceden_benthic_WQ_WBD.csv")
+#names(com.dates)[names(com.dates)=="StationCode.x"] <- "StationCode"
 ```
 
 ## Prepare data
@@ -44,7 +46,6 @@ ceden.sel <- com.dates %>%
          
          mean_Alk, mean_DO, mean_pH, mean_Sal, mean_Secc, mean_Cond,
          mean_Temp, mean_Turb, mean_Vel
-         
          )
 
 #Set subregion as a factor
@@ -62,7 +63,6 @@ taxa <- ceden.sel %>%
 ## WQ Data, create new dataframe with only the variables that have enough data to be included
 env <- ceden.sel %>%
   select(StationCode, SampleDate, Subregion.x, mean_DO, mean_pH, mean_Cond, mean_Temp,)
-
 ```
 
 ## NMDS

@@ -108,9 +108,7 @@ ceden.all.sf <- ceden.all.sf %>%
 ```
 
 ## Plot Ceden Data and Write csv
-
 ```{r, echo=TRUE }
-
 # Basic plot
 ggplot() +
   geom_sf(data = USFE.riskregions) +
@@ -120,9 +118,7 @@ ggplot() +
 
 # Write table
 
-write.csv(ceden.all.sf, "data/ceden_with_RR.csv")
-
-
+# write.csv(ceden.all.sf, "data/ceden_with_RR.csv") # Already printed to csv
 ```
 
 # Analysis
@@ -141,7 +137,6 @@ Orders:
 * Trichoptera (n_T)
 * Odonata (n_O)
 * Diptera (n_D)
-
 
 ```{r, echo=TRUE, results='hide'}
 ##### Create dataframe set into groups by station and sample date to isolate individual samples.
@@ -188,9 +183,7 @@ samp.df <- ceden.all.sf %>%
 ```
 
 ```{r, echo=TRUE}
-
-tibble(samp.df)
-
+tibble(samp.df) # 160 obsv
 ```
 
 ## Dataframe with one record for station
@@ -237,9 +230,7 @@ ceden.wq.sf <- st_join(ceden.wq, USFE.riskregions["Subregion"])
 # Remove records outside of Risk Regions
 ceden.wq.sf <- ceden.wq.sf %>%
   filter(!is.na(Subregion))
-
 ```
-
 
 ```{r, echo=TRUE}
 
@@ -249,7 +240,6 @@ ggplot() +
   geom_sf(data = ceden.wq.sf, aes(color = Subregion)) +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
   ggtitle("Ceden WQ Data")
-
 ```
 
 
@@ -396,10 +386,13 @@ samp.df.u10 <- st_transform(samp.df, 26910)
 ### Create 500m buffer around WQ sampling locations
 wq.stations.buffer <- st_buffer(wq.stations, 500) # buffer is 500 meters
 
-### Remove any buffers outside of the risk regions
-wq.stations.buffer <- wq.stations.buffer %>%
-  filter(!is.na(Subregion))
+### Remove any buffers outside of the risk regions ~ I hashtagged-out this portion, because I'm not sure if this would remove the entire buffer circle (including portions within the project boundary) if a segment of it extends beyond. 
+## Theoretically, WQ.Stations was already filtered to exclude stations outside of project boundaries (line 248). Going to see if it changes the number of results:
+## WITH this second buffer, com.dates = 64 obsv; 
+## W/O  this second buffer, com.dates = 64 obsv
 
+#wq.stations.buffer <- wq.stations.buffer %>%
+#filter(!is.na(Subregion))
 ```
 
 ### Plot WQ buffers and ceden benthic data
@@ -409,24 +402,22 @@ ggplot() +
   geom_sf(data = USFE.riskregions) +
   geom_sf(data = wq.stations.buffer, aes(color = Subregion)) +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
-  geom_sf(data = st.df.u10) +
+  geom_sf(data = st.df.u10, cex=0.7) +
   ggtitle("Ceden WQ Buffers and MI Sampling Locations")
 
 ```
 
 ### Join Datasets
 
-This join adds the water quality sampling data to the MI sampling data where the MI sampling location falls within the 500 meter buffer around the water quality sampling location. The second line of code selects the records only where the sampling dates are the same.
+#### Using 500m buffer
 
 ```{r, echo=TRUE, results='hide'}
-
 ### Join Benthic locations and WQ buffers
 samp.wq.com <- st_join(samp.df.u10, wq.stations.buffer, left = TRUE)
 
 ### Select records that have sampling data from the same date for benthic and WQ
 com.dates <- samp.wq.com %>%
-  filter(SampleDate == SampleDate.wq)
-
+  filter(SampleDate == SampleDate.wq) #1017 results, retains multiple matches of WQ per Benthic
 ```
 
 ```{r, echo=TRUE}
@@ -439,8 +430,7 @@ ggplot() +
   ggtitle("Ceden Benthic Data with WQ on same date")
 
 tibble(com.dates)
-```
-
+``` 
 
 ## Analysis
 

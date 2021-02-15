@@ -107,7 +107,6 @@ ceden.all.sf <- ceden.all.sf %>%
 
 ## Plot Ceden Data and Write csv
 
-
 ```r
 # Basic plot
 ggplot() +
@@ -122,7 +121,7 @@ ggplot() +
 ```r
 # Write table
 
-write.csv(ceden.all.sf, "data/ceden_with_RR.csv")
+# write.csv(ceden.all.sf, "data/ceden_with_RR.csv") # Already printed to csv
 ```
 
 # Analysis
@@ -141,7 +140,6 @@ Orders:
 * Trichoptera (n_T)
 * Odonata (n_O)
 * Diptera (n_D)
-
 
 
 ```r
@@ -189,13 +187,13 @@ samp.df <- ceden.all.sf %>%
 
 
 ```r
-tibble(samp.df)
+tibble(samp.df) # 160 obsv
 ```
 
 ```
 ## # A tibble: 160 x 37
 ##    StationCode SampleDate          Subregion StationName Project Projectcode
-##    <chr>       <dttm>              <fct>     <chr>       <chr>   <chr>      
+##    <chr>       <dttm>              <chr>     <chr>       <chr>   <chr>      
 ##  1 510CR0036   2018-06-18 00:00:00 Sacramen~ Sacramento~ Nation~ EPA_NRSA_2~
 ##  2 510CR0322   2018-06-20 00:00:00 Sacramen~ Miner Slou~ Nation~ EPA_NRSA_2~
 ##  3 510CR1007   2013-06-03 00:00:00 Sacramen~ Sacramento~ Nation~ EPA_NRSA_2~
@@ -262,7 +260,6 @@ ceden.wq.sf <- st_join(ceden.wq, USFE.riskregions["Subregion"])
 ceden.wq.sf <- ceden.wq.sf %>%
   filter(!is.na(Subregion))
 ```
-
 
 
 ```r
@@ -402,7 +399,7 @@ tibble(wq.stations)
 ```
 ## # A tibble: 2,132 x 66
 ##    StationName SampleDate.wq       Project     n Subregion n_Alk mean_Alk sd_Alk
-##    <chr>       <dttm>              <chr>   <int> <fct>     <int>    <dbl>  <dbl>
+##    <chr>       <dttm>              <chr>   <int> <chr>     <int>    <dbl>  <dbl>
 ##  1 209-6T      2014-02-28 00:00:00 CA Dep~     2 South De~     0       NA     NA
 ##  2 209-6T      2014-03-26 00:00:00 CA Dep~     2 South De~     0       NA     NA
 ##  3 209-6T      2015-04-07 00:00:00 CA Dep~     2 South De~     0       NA     NA
@@ -448,9 +445,13 @@ samp.df.u10 <- st_transform(samp.df, 26910)
 ### Create 500m buffer around WQ sampling locations
 wq.stations.buffer <- st_buffer(wq.stations, 500) # buffer is 500 meters
 
-### Remove any buffers outside of the risk regions
-wq.stations.buffer <- wq.stations.buffer %>%
-  filter(!is.na(Subregion))
+### Remove any buffers outside of the risk regions ~ I hashtagged-out this portion, because I'm not sure if this would remove the entire buffer circle (including portions within the project boundary) if a segment of it extends beyond. 
+## Theoretically, WQ.Stations was already filtered to exclude stations outside of project boundaries (line 248). Going to see if it changes the number of results:
+## WITH this second buffer, com.dates = 64 obsv; 
+## W/O  this second buffer, com.dates = 64 obsv
+
+#wq.stations.buffer <- wq.stations.buffer %>%
+#filter(!is.na(Subregion))
 ```
 
 ### Plot WQ buffers and ceden benthic data
@@ -461,7 +462,7 @@ ggplot() +
   geom_sf(data = USFE.riskregions) +
   geom_sf(data = wq.stations.buffer, aes(color = Subregion)) +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
-  geom_sf(data = st.df.u10) +
+  geom_sf(data = st.df.u10, cex=0.7) +
   ggtitle("Ceden WQ Buffers and MI Sampling Locations")
 ```
 
@@ -469,7 +470,7 @@ ggplot() +
 
 ### Join Datasets
 
-This join adds the water quality sampling data to the MI sampling data where the MI sampling location falls within the 500 meter buffer around the water quality sampling location. The second line of code selects the records only where the sampling dates are the same.
+#### Using 500m buffer
 
 
 ```r
@@ -478,7 +479,7 @@ samp.wq.com <- st_join(samp.df.u10, wq.stations.buffer, left = TRUE)
 
 ### Select records that have sampling data from the same date for benthic and WQ
 com.dates <- samp.wq.com %>%
-  filter(SampleDate == SampleDate.wq)
+  filter(SampleDate == SampleDate.wq) #1017 results, retains multiple matches of WQ per Benthic
 ```
 
 
@@ -501,7 +502,7 @@ tibble(com.dates)
 ```
 ## # A tibble: 64 x 102
 ##    StationCode SampleDate          Subregion.x StationName.x Project.x
-##    <chr>       <dttm>              <fct>       <chr>         <chr>    
+##    <chr>       <dttm>              <chr>       <chr>         <chr>    
 ##  1 510STODWx   2014-06-18 00:00:00 Sacramento~ Stone Lakes   EPA 104b~
 ##  2 543R00137   2012-05-15 00:00:00 Confluence  Deer Cr_137-~ CCCWP Cr~
 ##  3 543R01103   2015-04-21 00:00:00 Confluence  West Antioch~ CCCWP Cr~
@@ -522,7 +523,7 @@ tibble(com.dates)
 ## #   n_Euglenozoa <int>, n_Streptophyta <int>, n_Rhodophyta <int>,
 ## #   n_Chordata <int>, geometry <POINT [m]>, EPT_taxa <int>, EPT_index <dbl>,
 ## #   ETO_taxa <int>, ETO_index <dbl>, StationName.y <chr>, SampleDate.wq <dttm>,
-## #   Project.y <chr>, n <int>, Subregion.y <fct>, n_Alk <int>, mean_Alk <dbl>,
+## #   Project.y <chr>, n <int>, Subregion.y <chr>, n_Alk <int>, mean_Alk <dbl>,
 ## #   sd_Alk <dbl>, min_Alk <dbl>, max_Alk <dbl>, n_N <int>, mean_N <dbl>,
 ## #   sd_N <dbl>, min_N <dbl>, max_N <dbl>, n_Chl_F <int>, mean_Chl_F <dbl>,
 ## #   sd_Chl_F <dbl>, min_Chl_F <dbl>, max_Chl_F <dbl>, n_Chl_TR <int>,
@@ -537,7 +538,6 @@ tibble(com.dates)
 ## #   mean_Turb <dbl>, sd_Turb <dbl>, min_Turb <dbl>, max_Turb <dbl>,
 ## #   n_Vel <int>, mean_Vel <dbl>, sd_Vel <dbl>, min_Vel <dbl>, max_Vel <dbl>
 ```
-
 
 ## Analysis
 
