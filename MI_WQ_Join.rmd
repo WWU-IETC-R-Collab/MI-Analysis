@@ -9,15 +9,41 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## ALTERNATIVE TO BUFFERS: Join Datasets Using Nearest Neighbor
 
 Start with all objects from CEDEN_Benthic_Data_WBD.rmd in global environment (Open that rmd and choose "run all chunks")
 
 Then remove all extra objects from working directory
+
 ```{r}
 rm(list=setdiff(ls(), c("samp.df.u10", "wq.stations", "USFE.riskregions","HUC12", "HUC12.clipped", "st.df.u10")))
 ```
 
-## ALTERNATIVE: Join Datasets Using Nearest Neighbor
+## Data Prep
+
+1. Sort dataframes by sample date to facilitate analyses.
+2. Add an ID column to each dataframe (which maybe was in the original data, but since this project uses an already edited excel, no ID columns exist)
+3. Rename for use in loop (I know I should just make it a function that takes whatever object names hold the correct location)
+4. Create unique dates vector
+
+```{r}
+# Sort data chronologically
+samp.df.u10 <- samp.df.u10[order(samp.df.u10$SampleDate), ]
+wq.stations <- wq.stations[order(wq.stations$SampleDate.wq), ]
+
+# Add back on ID labels for each date:location combo
+samp.df.u10$ID.benthic <- c(1:length(samp.df.u10$StationCode)) # Gives ID's from 1:160
+wq.stations$ID.wq <- c(161: c(160+length(wq.stations$SampleDate.wq))) # Gives ID's 161+
+
+# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails due to memory allocation, try selecting a minimum of columns to reduce working memory.
+A <- samp.df.u10
+  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, SampleDate, geometry))
+B <- wq.stations
+  #select(wq.stations, c(ID.wq, StationName,SampleDate.wq))
+
+Dates<- unique(A$SampleDate) %>%
+  sort(.,descending = TRUE)
+```
 
 ### Plot WQ and ceden benthic data
 
@@ -29,47 +55,25 @@ ggplot() +
   geom_sf(data = st.df.u10) +
   ggtitle("Ceden WQ Stations and MI Sampling Locations") + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-
 ```
 
-### Join Datasets Using Nearest Neighbor
+## Simple Nearest Neighbor by Date
 
 This nested loop subsets each dataset for unique dates, then runs nearest neighbor analysis within data of each date, and appends the distance between datapoints onto the matrix. The "If" loop allows the "For" loop to bypass MI sample dates for which there are no WQ samples on the same date.
-
-Unfortunately, I get the error "Error: cannot allocate vector of size 11.2 Gb" when I try to run this, so I'm looking into ways to increase the memory limit.
-
-Going to add an ID column to each dataframe (which maybe was in the original data, but since this project uses an already edited excel, not ID columns exist), and then run this process using just ID's and primary columns, omitting sample data that can be joined back on later.
 
 ```{r}
 # IF YOU GET THIS: “Error: cannot allocate vector of size 11.2 Gb”
 # TRY increasing the memory limit - solution from:
 # https://statisticsglobe.com/r-error-cannot-allocate-vector-of-size-n-gb
-memory.limit() # currently at 16290
+# memory.limit() # currently at 16290
 # memory.limit(35000) # Run this if run into memory limits
-
-# Add back on ID labels for each date:location combo
-samp.df.u10$ID.benthic <- c(1:length(samp.df.u10$StationCode)) # Gives ID's from 1:160
-wq.stations$ID.wq <- c(161: c(160+length(wq.stations$SampleDate.wq))) # Gives ID's 161+
-
-
-# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails, try selecting a minimum of columns to reduce working memory.
-A <- samp.df.u10
-  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, SampleDate, geometry))
-B <- wq.stations
-  #select(wq.stations, c(ID.wq, StationName,SampleDate.wq))
 ```
 
-### Run the loop:
-
 ```{r, results='hide', message=FALSE}
-##### Loop Prep
-
-# Make vector with only unique dates
-Dates<- unique(A$SampleDate)
-Dates <- sort((Dates),descending = TRUE)
-
+# Loop Prep
 JoinResult <- vector("list") # save empty list where output from each day's join will be saved
 
+# Loop
 for (i in 1:56){
   A_Sub <- A %>% filter(SampleDate == Dates[i])
   B_Sub <- B %>% filter(SampleDate.wq == Dates[i])
@@ -113,14 +117,10 @@ This was meant to prioritize samples on the exact same day
 By adding an else statement to the loop, it can prioritize the closest sample on the same date, but if none exist, then it will jump to look for the closest samples within 1 day of the sample date
 
 ```{r, results='hide', message=FALSE}
-##### Loop Prep
+## Loop Prep ##
 
 # Remove results from prior method
 rm(i, A_Sub, B_Sub, distList, SubResult, JoinResult)
-
-# Make vector with only unique dates
-Dates <- unique(A$SampleDate)
-Dates <- sort((Dates),descending = TRUE)
 
 # save empty list where output from each day's join will be saved
 JoinResult <- vector("list") 
@@ -165,7 +165,7 @@ ggplot() +
   ggtitle("Ceden Benthic Data with WQ on same date, filtered by HUC12")
 ```
 
-### Simplified
+### Second Try/ Simplified
 
 This should prioritizes finding the closest location +/- 1 day of MI sample (no weight given to the same date)
 
@@ -176,14 +176,10 @@ The resulting matches *before filtering to HUC boundaries* were closer on averag
 Given this, I think the original method is better.
 
 ```{r, results='hide', message=FALSE}
-##### Loop Prep
+## Loop Prep ##
 
 # Remove results from prior method
 rm(i, A_Sub, B_Sub, distList, SubResult, JoinResult)
-
-# Make vector with only unique dates
-Dates<- unique(A$SampleDate)
-Dates <- sort((Dates),descending = TRUE)
 
 # save empty list where output from each day's join will be saved
 JoinResult <- vector("list") 
@@ -206,4 +202,85 @@ length(unique(NN_HUC$ID.benthic)) # Confirms no duplicated benthic samples
 V2_Total <- mean(NN_Results$Dist) #12433
 V2_HUC <- mean(NN_HUC$Dist) #535
 ```
+
+## Exploring WQ temporal variability
+
+There was a suggestion to expand the data of each day to a 5-day average, hoping that would increase the coverage of the WQ data and allow more matches.
+
+Two questions that brings up are (1) What kind of coverage is there within the WQ data (how often are there multiple samples within 5-days of eachother?)
+
+Also - rather than replacing TRUE data with AVG, we could retain the real data where possible, and only resort to approximated values when there was no data there to begin with.
+
+### WQ Data Descriptions
+
+Can I summarize approximate data points per year/ or by sampling location?
+
+```{r}
+head(wq.stations)
+
+length(unique(wq.stations$StationName)) # There are 187 stations in the WQ Dataset
+length(unique(wq.stations$SampleDate.wq)) # There are 428 unique sample dates
+
+# Just peeking at an example location - how many data points? How much variation?
+# Only three samples in the entire study period at this site, one per month for three months in 2009. **WOW**
+wq.stations$mean_DO[wq.stations$StationName == "South Webb Tract Drain"]
+wq.stations$SampleDate.wq[wq.stations$StationName == "South Webb Tract Drain"]
+```
+
+### Try 1
+
+#### 1. Expand WQ dataset
+
+Before we can fill the missing time points with data, I would need to create space for that to happen. If I add every day for 10 years for every location, that would be far too huge. Instead, I could simply ensure every date *from the MI dataset* (only 56 dates) is available for potentially filling at every WQ location?
+
+#### Fill dataset
+
+First, running the process using just one example WQ station. Using na.locf() to fill, it determines the OK extent to fill based on rows, not taking into account if those dates are wildly different.
+
+This did not work.
+```{r}
+library(zoo)
+
+# Since this needs to be done for each station separately... Create vector of unique station names
+
+Stations <- unique(wq.stations$StationName) #1:187
+
+# Loop Prep: Create empty df with one column containing all dates in MI samples (appropriate # of columns to join to wq data)
+
+Dates_df <- data.frame(matrix(ncol = ncol(wq.stations), nrow = length(Dates)))
+  
+colnames(Dates_df) <- colnames(wq.stations)
+
+Dates_df$SampleDate.wq<- Dates #1:56
+
+# Test: Subset to deal with one station - #29 is a good tester
+
+WQ_Sub <- wq.stations %>% filter(StationName == Stations[29]) 
+
+# Subset MI dates *BEFORE* merging with the real data frame....
+
+Expanded <- subset( Dates_df, !(Dates_df$SampleDate.wq %in% WQ_Sub$SampleDate.wq)) %>%
+  rbind(., WQ_Sub) %>% 
+  arrange(SampleDate.wq) %>%  
+  group_by(SampleDate.wq)
+
+# Fill blanks - max gap is not working because it identifies *how far is acceptable* based on number of rows, not actual dates.
+
+Filled <- na.locf(Expanded, fromLast = F, maxgap = 3, na.rm = FALSE) %>% 
+  filter(!is.na(StationName)) 
+
+Filled2 <- na.locf(Filled, fromLast = T, maxgap = 3, na.rm = F) %>%
+  filter(!is.na(StationName)) #136 whether T or F 
+
+# fromLast = F carries the most recent observation forward. 
+# fromLast = T should backfill to earlier dates, BUT
+# For some reason, even when I use fromLast=T, it fills gaps but does not always is not carrying those forward...
+
+length(WQ_Sub$SampleDate.wq) # 100 total records (= unique dates)
+
+length(unique(Expanded$SampleDate.wq)) # 151 unique dates after merge
+
+length(Filled$StationName) # 136 records after filling
+```
+
 
