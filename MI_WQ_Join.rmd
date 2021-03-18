@@ -9,57 +9,181 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## ALTERNATIVE TO BUFFERS: Join Datasets Using Nearest Neighbor
+Start with all objects from **CEDEN_Benthic_Data_WBD.rmd** in global environment (Open that rmd and choose "run all chunks")
 
-Start with all objects from CEDEN_Benthic_Data_WBD.rmd in global environment (Open that rmd and choose "run all chunks")
+Then remove all extra objects from working directory, keeping:
 
-Then remove all extra objects from working directory
++ samp.df.u10 (Benthic samples point shapefile, summarised and projected in NAD83 UTM10)
+
++ wq.stations (WQ samples point shapefile, summarised and projected in NAD83 UTM10)
+
++ rr.u10 (USFE Risk Region polygons, projected in NAD83 UTM10)
+
++ st.df.u10 (Benthic sample sites for mapping)
+
++ wq.df.u10 (WQ sample sites for mapping)
 
 ```{r}
-rm(list=setdiff(ls(), c("samp.df.u10", "wq.stations", "USFE.riskregions","HUC12", "HUC12.clipped", "st.df.u10")))
+library(zoo)
+library(foreach)
+
+rm(list=setdiff(ls(), c("samp.df.u10", "wq.stations", "USFE.riskregions", "rr.u10", "st.df.u10", "wq.df.u10")))
 ```
 
-## Data Prep
+## ALTERNATIVE TO BUFFERS: Join Datasets Using Nearest Neighbor
+
+### Data Prep
 
 1. Sort dataframes by sample date to facilitate analyses.
+
 2. Add an ID column to each dataframe (which maybe was in the original data, but since this project uses an already edited excel, no ID columns exist)
-3. Rename for use in loop (I know I should just make it a function that takes whatever object names hold the correct location)
-4. Create unique dates vector
 
 ```{r}
 # Sort data chronologically
-samp.df.u10 <- samp.df.u10[order(samp.df.u10$SampleDate), ]
-wq.stations <- wq.stations[order(wq.stations$SampleDate.wq), ]
+samp.df.u10 <- samp.df.u10[order(samp.df.u10$Date), ]
+wq.stations <- wq.stations[order(wq.stations$Date.wq), ]
 
-# Add back on ID labels for each date:location combo
+# Add ID labels for each date:location combo
 samp.df.u10$ID.benthic <- c(1:length(samp.df.u10$StationCode)) # Gives ID's from 1:160
-wq.stations$ID.wq <- c(161: c(160+length(wq.stations$SampleDate.wq))) # Gives ID's 161+
 
-# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails due to memory allocation, try selecting a minimum of columns to reduce working memory.
-A <- samp.df.u10
-  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, SampleDate, geometry))
-B <- wq.stations
-  #select(wq.stations, c(ID.wq, StationName,SampleDate.wq))
-
-Dates<- unique(A$SampleDate) %>%
-  sort(.,descending = TRUE)
+wq.stations$ID.wq <- c(161: c(160+length(wq.stations$Date.wq))) # Gives ID's 161+
 ```
 
 ### Plot WQ and ceden benthic data
 
 ```{r, echo=TRUE}
 ggplot() +
-  geom_sf(data = USFE.riskregions) +
-  geom_sf(data = wq.stations, aes(color = Subregion)) +
+  geom_sf(data = rr.u10) +
+  geom_sf(data = wq.df.u10, aes(color = Subregion)) +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
   geom_sf(data = st.df.u10) +
   ggtitle("Ceden WQ Stations and MI Sampling Locations") + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 ```
 
-## Simple Nearest Neighbor by Date
+### Expand WQ data date coverage prior to NN Analysis
+
+2. Fill empty records with prior data (up to 3 days past).
+
+This code design takes a shape file "A" and outputs a shapefile "Pad.results" which has filled NA's following a sample with that sample's data for up to 3 days past.
+
+It would be great to be able to also do the other direction, but I have not yet figured that.
+
+```{r, message = F}
+str(wq.stations$geometry) # Needs to be sfc_POINT not _GEOM
+
+### This code outputs a shapefile "Pad.results" which has filled NA's with prior data for up to 3 days.
+
+A <- wq.stations
+
+A <- A %>% dplyr::mutate(lat = sf::st_coordinates(.)[,1],
+                lon = sf::st_coordinates(.)[,2])
+
+### 1. Prepare Data: Add a column with id that will have no date duplication, and remove shpfile properties (zoo can't properly convert a SF)
+
+# Remove shp properties
+A <- A %>% st_set_geometry(NULL)
+
+### 2. LOOP 1 Separates dataframe by unique name-analyte combinations to remove duplication of dates; converts to zoo and creates a daily timestep to prep for next steps. Creates a list of these dataframes.
+
+# Items required for loop
+
+ID <- unique(A$StationName) # Vector to loop over
+
+A.list <- list() # Empty List to store output
+
+# loop 1
+
+for (i in 1:length(ID)){
+  A_sub <- A %>% filter(StationName == ID[i]) # subset records for unique id (station name)
+  zA <- zoo(A_sub, as.Date(A_sub$Date.wq)) # convert to zoo
+  g <- seq(start(zA), c(end(zA)+4), "day") %>% 
+  zoo(., as.Date(.)) # make TS that adds 3 days to end of original df
+  A.list[[i]]<- merge(zA, g)} ### Merge
+
+```
+
+```{r, message = F, warning = F}
+### 2: Define function to fill NA's with true data for up to 3 days past, then loop it through the dataset
+
+# Define function: replaces NA's with previous value (up to 3 locations ahead)
+
+f2 <- function(x) replace(x, 1:4, x[1])  
+
+# Foreach loop, runs paralell processes #~ 5 minutes 
+
+Pad.result <- foreach(i = 1:length(A.list), .combine=rbind) %dopar% {
+  m <- A.list[[i]] # take one subset with unique dates
+  for (col in 1:ncol(m)) { # nested loop that pads up to 3 dates out
+        x <- m[,col]
+        m[,col]<- ave(x, cumsum(!is.na(x)), FUN = f2)
+        }
+  m <- fortify.zoo(m) %>%   # convert subset back to dataframe
+        select(-g) %>%    # Removes arbitrary date column
+        filter(!is.na(StationName))# filter na's
+}
+
+# Fix dates
+Pad.result <- Pad.result %>% filter(!is.na(Latitude))%>%
+  rename(OriginalWQ.Date = Date.wq) %>% # Create new column name to hold date of original data used to create each record.
+  rename(Date.wq = Index) # extract dates for query
+
+# write.csv(Pad.result, "data/Expanded_Dates_WQ.csv", row.names=F)
+```
+
+```{r, message = F, warning = F}
+### 3. Convert back to SF
+
+# Previous doc assumed that CEDENMOD had coords in WSG84 then converted to NAD83. THis uses the lat and lon extracted from that file to reapply NAD 83. The file CEDENMOD_WQ created by Skyler should have been read in as NAD83
+
+## EPSG:26910 = NAD83 / UTM zone 10N
+## ESRI:102643 = NAD 1983 StatePlane California III FIPS 0403 Feet
+
+Pad.result <- Pad.result %>% 
+  st_as_sf(coords = c("lat", "lon"), crs = "EPSG:26910", remove = F)
+
+st_crs(Pad.result) # NAD83 UTM 10N, matches wq.stations
+```
+
+The dataset went from `r length(A$Date)` records to `r length(Pad.results$Date)` using this padding. 
+
+### Plot to check work?
+
+```{r, warning= F }
+# Plot sf with RR
+ggplot() +
+  geom_sf(data = USFE.riskregions, fill = NA) + 
+  geom_sf(data = Pad.result, aes(color = Subregion)) +
+  scale_color_brewer(palette = "Set1") +
+  ggtitle("WQ data - Expanded Date Coverage")
+```
+
+*Note: Skyler recommends converting all to NAD83/CAFIPS before NN analysis*\
+
+```{r}
+# Transform to NAD83 StatePlane CA FIPS
+# Pad.result <- st_transform(Pad.result, "ESRI:102643")
+
+# st_crs(Pad.result) # NAD83 SP CA FIPS 0403
+```
+
+## Nearest Neighbor Analysis
 
 This nested loop subsets each dataset for unique dates, then runs nearest neighbor analysis within data of each date, and appends the distance between datapoints onto the matrix. The "If" loop allows the "For" loop to bypass MI sample dates for which there are no WQ samples on the same date.
+
+```{r}
+
+# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails due to memory allocation, try selecting a minimum of columns to reduce working memory.
+
+A <- samp.df.u10
+  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, Date, geometry))
+
+B <- Pad.result
+  #select(wq.stations, c(ID.wq, StationName,Date.wq))
+
+Dates<- unique(A$Date) %>%
+  sort(.,descending = TRUE)
+```
 
 ```{r}
 # IF YOU GET THIS: “Error: cannot allocate vector of size 11.2 Gb”
@@ -75,21 +199,19 @@ JoinResult <- vector("list") # save empty list where output from each day's join
 
 # Loop
 for (i in 1:56){
-  A_Sub <- A %>% filter(SampleDate == Dates[i])
-  B_Sub <- B %>% filter(SampleDate.wq == Dates[i])
+  A_Sub <- A %>% filter(Date == Dates[i])
+  B_Sub <- B %>% filter(Date.wq == Dates[i])
   if (nrow(B_Sub)>0){
-  distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
+  distList <- st_nn(A_Sub, B_Sub, k=1,  returnDist= T)
   SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
   SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
   JoinResult[[i]] <- SubResult}
   }
 
-NN_Results <- do.call(rbind, JoinResult) # Results in 79 matches
+NN_Results <- do.call(rbind, JoinResult) # Results in 121 matches
+
+mean(NN_Results$Dist) # Average distance was 14,4420 m. Yikes! Why would having MORE options make the average distance btwn NN matches increase? Shouldn't it decrease? UNLESS it's because those additional matches were mostly long shots.
 ```
-
-There were 79 total Benthic samples with WQ samples on the same date. 
-
-Plotting the resulting benthic locations with colors from the nearest WQ sites, it's apparent that some were pulled with WQ data from across subregion boundaries
 
 ```{r, echo=TRUE}
 ### Plot benthic sampling locations that has WQ available on the same date
@@ -98,189 +220,211 @@ ggplot() +
   geom_sf(data = USFE.riskregions) +
   geom_sf(data = NN_Results, aes(color = Subregion.y)) +
   scale_color_brewer(palette = "Set1") +
+  ggtitle("Ceden Benthic w/ WQ Matched")
+
+```
+
+If we filter to make sure only pairs from within the same HUC12 watershed boundaries are retained, we are *still* left with 79 records (previously 59 records), and the average distance is 16.8 m (about the same as before) 
+
+```{r}
+NN_HUC <- NN_Results %>% filter(HUC12.x == HUC12.y) # results in 79 records
+
+max(NN_HUC$Dist)
+```
+
+## To compare, without expanded dates:
+
+Here you can see in the plot how many "matches" were pulled from outside of MI sample's risk regions
+
+```{r, results='hide', message=FALSE}
+# The loop takes shp tibbles A (Benthic) and B (WQ). 
+
+A <- samp.df.u10
+
+B <- wq.stations
+
+Dates<- unique(A$Date) %>%
+  sort(.,descending = TRUE)
+
+# Loop Prep
+JoinResult <- vector("list") # save empty list where output from each day's join will be saved
+
+# Loop
+for (i in 1:56){
+  A_Sub <- A %>% filter(Date == Dates[i])
+  B_Sub <- B %>% filter(Date.wq == Dates[i])
+  if (nrow(B_Sub)>0){
+  distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
+  SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
+  SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
+  JoinResult[[i]] <- SubResult}
+  }
+
+NN_Results2 <- do.call(rbind, JoinResult) # Results in 79 matches
+
+nrow(NN_Results2) #95
+mean(NN_Results2$Dist) # Mean distance of matches = 5,126
+```
+
+```{r, echo=TRUE}
+### Plot benthic sampling locations that has WQ available on the same date
+
+ggplot() +
+  geom_sf(data = USFE.riskregions) +
+  geom_sf(data = NN_Results2, aes(color = Subregion.y)) +
+  scale_color_brewer(palette = "Set1") +
   ggtitle("Ceden Benthic Data with WQ on same date")
 
 ```
 
-If we filter to make sure only pairs from within the same HUC12 watershed boundaries are retained, we are left with only 59 records.
+If we filter to make sure only pairs from within the same HUC12 watershed boundaries are retained, we are *still* left with 79 records, (previously 59 records), yet the average distance is only 16 m (reduced from XXXX)
 
 ```{r}
-NN_HUC <- NN_Results %>% filter(HUC12.x == HUC12.y) # results in 59 records
+NN_HUC2 <- NN_Results2 %>% filter(HUC12.x == HUC12.y) # results in 79 records
+
+mean(NN_HUC2$Dist) #16.79 m
 ```
 
-## Flexible dates {.tabset}
 
-### First Try
+## Results
 
-This was meant to prioritize samples on the exact same day
+Methods vs Number & Distance of Matches
 
-By adding an else statement to the loop, it can prioritize the closest sample on the same date, but if none exist, then it will jump to look for the closest samples within 1 day of the sample date
++ Using Eric's WQ data, there were **79** total Benthic samples with WQ samples on the same date. 
+
+* After changing to use the most recent CEDENMod_WQ dataset, we had **95** matches. 
+
++ By using the "expanded" WQ data (with data expanded to fill up to 3 days later), that number increases to **121** matches.
+
+**+ With both the regular and "expanded" df, filtering on HUC12 boundaries reduced the number of matches to 79**
+
+**+ With both the regular and "expanded" wq df, filtering on HUC12 boundaries reduced the mean distance to ~17m**
+
+
+## What if START by restricting to shared HUC12 boundaries?
+And increasing length of data expansion to 7 days?
+
+### Expanding Data
+```{r, message = F}
+str(wq.stations$geometry) # Needs to be sfc_POINT not _GEOM
+
+### This code outputs a shapefile "Pad.results" which has filled NA's with prior data for up to 3 days.
+
+A <- wq.stations
+
+A <- A %>% dplyr::mutate(lat = sf::st_coordinates(.)[,1],
+                lon = sf::st_coordinates(.)[,2])
+
+### 1. Prepare Data: Add a column with id that will have no date duplication, and remove shpfile properties (zoo can't properly convert a SF)
+
+# Remove shp properties
+A <- A %>% st_set_geometry(NULL)
+
+### 2. LOOP 1 Separates dataframe by unique name-analyte combinations to remove duplication of dates; converts to zoo and creates a daily timestep to prep for next steps. Creates a list of these dataframes.
+
+# Items required for loop
+
+ID <- unique(A$StationName) # Vector to loop over
+
+A.list <- list() # Empty List to store output
+
+# loop 1
+
+for (i in 1:length(ID)){
+  A_sub <- A %>% filter(StationName == ID[i]) # subset records for unique id (station name)
+  zA <- zoo(A_sub, as.Date(A_sub$Date.wq)) # convert to zoo
+  g <- seq(start(zA), c(end(zA)+4), "day") %>% 
+  zoo(., as.Date(.)) # make TS that adds 3 days to end of original df
+  A.list[[i]]<- merge(zA, g)} ### Merge
+
+```
+
+```{r, message = F, warning = F}
+### 2: Define function to fill NA's with true data for up to 3 days past, then loop it through the dataset
+
+# Define function: replaces NA's with previous value (up to 3 locations ahead)
+
+f2 <- function(x) replace(x, 1:7, x[1])  
+
+# Foreach loop, runs paralell processes #~ 5 minutes 
+
+Pad.result <- foreach(i = 1:length(A.list), .combine=rbind) %dopar% {
+  m <- A.list[[i]] # take one subset with unique dates
+  for (col in 1:ncol(m)) { # nested loop that pads up to 3 dates out
+        x <- m[,col]
+        m[,col]<- ave(x, cumsum(!is.na(x)), FUN = f2)
+        }
+  m <- fortify.zoo(m) %>%   # convert subset back to dataframe
+        select(-g) %>%    # Removes arbitrary date column
+        filter(!is.na(StationName))# filter na's
+}
+
+# Fix dates
+Pad.result <- Pad.result %>% filter(!is.na(Latitude))%>%
+  rename(OriginalWQ.Date = Date.wq) %>% # Create new column name to hold date of original data used to create each record.
+  rename(Date.wq = Index) # extract dates for query
+
+# write.csv(Pad.result, "data/Expanded_Dates_WQ.csv", row.names=F)
+```
+
+```{r, message = F, warning = F}
+### 3. Convert back to SF
+
+# Previous doc assumed that CEDENMOD had coords in WSG84 then converted to NAD83. THis uses the lat and lon extracted from that file to reapply NAD 83. The file CEDENMOD_WQ created by Skyler should have been read in as NAD83
+
+## EPSG:26910 = NAD83 / UTM zone 10N
+## ESRI:102643 = NAD 1983 StatePlane California III FIPS 0403 Feet
+
+Pad.result <- Pad.result %>% 
+  st_as_sf(coords = c("lat", "lon"), crs = "EPSG:26910", remove = F)
+
+st_crs(Pad.result) # NAD83 UTM 10N, matches wq.stations
+```
+
+### NN Analysis
+```{r}
+# The loop takes shp tibbles A (Benthic) and B (WQ). # If this fails due to memory allocation, try selecting a minimum of columns to reduce working memory.
+
+A <- samp.df.u10
+  # select(samp.df.u10, c(ID.benthic, StationCode, StationName, Date, geometry))
+
+B <- Pad.result
+  #select(wq.stations, c(ID.wq, StationName,Date.wq))
+
+# Create new column to filter on: Dates by HUC12 WBD
+
+A$Dates_in_WBD <- paste(A$Date, "-", A$HUC12)
+B$Dates_in_WBD <- paste(B$Date.wq, "-", B$HUC12)
+
+# Create Vector of unique separator
+DateWBD <- unique(A$Dates_in_WBD) %>%
+  sort()
+```
+
+```{r}
+# IF YOU GET THIS: “Error: cannot allocate vector of size 11.2 Gb”
+# TRY increasing the memory limit - solution from:
+# https://statisticsglobe.com/r-error-cannot-allocate-vector-of-size-n-gb
+# memory.limit() # currently at 16290
+# memory.limit(35000) # Run this if run into memory limits
+```
 
 ```{r, results='hide', message=FALSE}
-## Loop Prep ##
+# Loop Prep
+JoinResult <- vector("list") # save empty list where output from each day's join will be saved
 
-# Remove results from prior method
-rm(i, A_Sub, B_Sub, distList, SubResult, JoinResult)
-
-# save empty list where output from each day's join will be saved
-JoinResult <- vector("list") 
-
-for (i in 1:56){
-  A_Sub <- A %>% filter(SampleDate == Dates[i])
-  B_Sub <- B %>% filter(SampleDate.wq == Dates[i])
+# Loop
+for (i in 1:length(DateWBD)){
+  A_Sub <- A %>% filter(Dates_in_WBD == DateWBD[i])
+  B_Sub <- B %>% filter(Dates_in_WBD == DateWBD[i])
   if (nrow(B_Sub)>0){
-    distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
-    SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
-    SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
-    JoinResult[[i]] <- SubResult}
-  else { 
-    B_Sub <- B %>% filter(SampleDate.wq %in% c(Dates[i-1], Dates[i+1]))
-    if (nrow(B_Sub)>0){
-      distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
-      SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
-      SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
-      JoinResult[[i]] <- SubResult}
-    }
+  distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
+  SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
+  SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
+  JoinResult[[i]] <- SubResult}
   }
 
-NN_Results <- do.call(rbind, JoinResult) # Results in 120 matches
+NN_Results <- do.call(rbind, JoinResult) # Results in 79 matches
 
-NN_HUC <- NN_Results %>% filter(HUC12.x == HUC12.y) # Results in 62 matches
-
-length(unique(NN_HUC$ID.benthic)) # Confirms that no benthic has been matched to more than one WQ station (no duplicate matches)
-
-V1_Total<- mean(NN_Results$Dist) #13534
-V1_HUC <- mean(NN_HUC$Dist) #536
+min(NN_Results$Dist) # Average distance was 16.8
 ```
-
-```{r, echo=TRUE}
-
-### Plot benthic sampling locations that has WQ available on the same date
-
-ggplot() +
-  geom_sf(data = HUC12.clipped, color = "green", fill = NA) +
-  geom_sf(data = USFE.riskregions, fill = NA) +
-  geom_sf(data = NN_HUC, aes(color = Subregion.y)) +
-  scale_color_brewer(palette = "Set1") +
-  ggtitle("Ceden Benthic Data with WQ on same date, filtered by HUC12")
-```
-
-### Second Try/ Simplified
-
-This should prioritizes finding the closest location +/- 1 day of MI sample (no weight given to the same date)
-
-Theoretically, if we start the search by allowing +/- 1 day of MI sample, then it should return the same total number of matches as above, but allow a closer average distance between samples.
-
-The resulting matches *before filtering to HUC boundaries* were closer on average, yet after filtering to HUC boundaries the results were exactly the same - total number of matches, matches within HUC boundaries, and average distance. If multiple WQ matches occur within the one day span at a given WQ site, I'm not sure how one is one selected w/in st_nn.
-
-Given this, I think the original method is better.
-
-```{r, results='hide', message=FALSE}
-## Loop Prep ##
-
-# Remove results from prior method
-rm(i, A_Sub, B_Sub, distList, SubResult, JoinResult)
-
-# save empty list where output from each day's join will be saved
-JoinResult <- vector("list") 
-
-for (i in 1:56){
-  A_Sub <- A %>% filter(SampleDate == Dates[i])
-  B_Sub <- B %>% filter(SampleDate.wq %in% c(Dates[i], Dates[i+1], Dates[i-1]))
-  if (nrow(B_Sub)>0){
-    distList <- st_nn(A_Sub, B_Sub, k=1, returnDist= T)
-    SubResult <- st_join(A_Sub, B_Sub, join = st_nn, k=1)
-    SubResult$Dist <- unlist(distList$dist, recursive = TRUE, use.names = TRUE)
-    JoinResult[[i]] <- SubResult}
-  }
-
-NN_Results <- do.call(rbind, JoinResult) # Results in 120 matches
-
-NN_HUC <- NN_Results %>% filter(HUC12.x == HUC12.y) # Results in 62 matches
-length(unique(NN_HUC$ID.benthic)) # Confirms no duplicated benthic samples
-
-V2_Total <- mean(NN_Results$Dist) #12433
-V2_HUC <- mean(NN_HUC$Dist) #535
-```
-
-## Exploring WQ temporal variability
-
-There was a suggestion to expand the data of each day to a 5-day average, hoping that would increase the coverage of the WQ data and allow more matches.
-
-Two questions that brings up are (1) What kind of coverage is there within the WQ data (how often are there multiple samples within 5-days of eachother?)
-
-Also - rather than replacing TRUE data with AVG, we could retain the real data where possible, and only resort to approximated values when there was no data there to begin with.
-
-### WQ Data Descriptions
-
-Can I summarize approximate data points per year/ or by sampling location?
-
-```{r}
-head(wq.stations)
-
-length(unique(wq.stations$StationName)) # There are 187 stations in the WQ Dataset
-length(unique(wq.stations$SampleDate.wq)) # There are 428 unique sample dates
-
-# Just peeking at an example location - how many data points? How much variation?
-# Only three samples in the entire study period at this site, one per month for three months in 2009. **WOW**
-wq.stations$mean_DO[wq.stations$StationName == "South Webb Tract Drain"]
-wq.stations$SampleDate.wq[wq.stations$StationName == "South Webb Tract Drain"]
-```
-
-### Try 1
-
-#### 1. Expand WQ dataset
-
-Before we can fill the missing time points with data, I would need to create space for that to happen. If I add every day for 10 years for every location, that would be far too huge. Instead, I could simply ensure every date *from the MI dataset* (only 56 dates) is available for potentially filling at every WQ location?
-
-#### Fill dataset
-
-First, running the process using just one example WQ station. Using na.locf() to fill, it determines the OK extent to fill based on rows, not taking into account if those dates are wildly different.
-
-This did not work.
-```{r}
-library(zoo)
-
-# Since this needs to be done for each station separately... Create vector of unique station names
-
-Stations <- unique(wq.stations$StationName) #1:187
-
-# Loop Prep: Create empty df with one column containing all dates in MI samples (appropriate # of columns to join to wq data)
-
-Dates_df <- data.frame(matrix(ncol = ncol(wq.stations), nrow = length(Dates)))
-  
-colnames(Dates_df) <- colnames(wq.stations)
-
-Dates_df$SampleDate.wq<- Dates #1:56
-
-# Test: Subset to deal with one station - #29 is a good tester
-
-WQ_Sub <- wq.stations %>% filter(StationName == Stations[29]) 
-
-# Subset MI dates *BEFORE* merging with the real data frame....
-
-Expanded <- subset( Dates_df, !(Dates_df$SampleDate.wq %in% WQ_Sub$SampleDate.wq)) %>%
-  rbind(., WQ_Sub) %>% 
-  arrange(SampleDate.wq) %>%  
-  group_by(SampleDate.wq)
-
-# Fill blanks - max gap is not working because it identifies *how far is acceptable* based on number of rows, not actual dates.
-
-Filled <- na.locf(Expanded, fromLast = F, maxgap = 3, na.rm = FALSE) %>% 
-  filter(!is.na(StationName)) 
-
-Filled2 <- na.locf(Filled, fromLast = T, maxgap = 3, na.rm = F) %>%
-  filter(!is.na(StationName)) #136 whether T or F 
-
-# fromLast = F carries the most recent observation forward. 
-# fromLast = T should backfill to earlier dates, BUT
-# For some reason, even when I use fromLast=T, it fills gaps but does not always is not carrying those forward...
-
-length(WQ_Sub$SampleDate.wq) # 100 total records (= unique dates)
-
-length(unique(Expanded$SampleDate.wq)) # 151 unique dates after merge
-
-length(Filled$StationName) # 136 records after filling
-```
-
-
