@@ -43,6 +43,7 @@ library(sf)
 library(here)
 library(readxl)
 library(nngeo)
+library(data.table)
 
 # Load risk regions shapefile
 USFE.riskregions <- here("data/RiskRegions_DWSC_Update_9292020.shp") %>%
@@ -52,11 +53,14 @@ USFE.riskregions <- here("data/RiskRegions_DWSC_Update_9292020.shp") %>%
 crs.WGS84 <- st_crs(USFE.riskregions)
 
 #Load in CEDEN data
-CEDEN <- read_excel("data/ceden_data_edited.xlsx")
+CEDEN <- read_excel("data/ceden_data_edited.xlsx") %>%
+  rename(Date = SampleDate) 
 
 # Load in CA Watershed boundaries HUC12 - sourced from https://data.ca.gov/dataset/ca-usgs-watershed-boundary-dataset-12-digit-hydrologic-units
 HUC12 <- here("USGS_WBD/") %>%
-  st_read()
+  st_read() %>% # CRS = WGS 84 pseudomercator
+  st_transform(., crs.WGS84) %>%
+  st_intersection(.,USFE.riskregions)
 ```
 
 ## Set CEDEN Projection to WGS84
@@ -109,14 +113,6 @@ ceden.all.sf <- bind_rows(ceden.all.sf, ceden.NAD27.t.wgs84.sf)
 
 ceden.all.sf <- ceden.all.sf %>%
   filter(!is.na(Subregion))
-
-### Same Rodeo for HUC Sf?
-HUC12.WGS84 <- st_transform(HUC12, crs.WGS84)
-st_crs(HUC12.WGS84)
-
-HUC12<- st_crop(HUC12.WGS84, st_bbox(USFE.riskregions)) # shows square plot of HUC boundaries, so that there is some context to those which extend past our RR
-
-HUC12.clipped <- st_intersection(HUC12,USFE.riskregions)
 ```
 
 ## Plot Ceden Data and Write csv
@@ -125,7 +121,7 @@ HUC12.clipped <- st_intersection(HUC12,USFE.riskregions)
 ```r
 # Basic plot
 ggplot() +
-  geom_sf(data = HUC12.clipped, color = "green") +
+  geom_sf(data = HUC12, color = "green") +
   geom_sf(data = USFE.riskregions, fill = NA) +
   geom_sf(data = ceden.all.sf, aes(color = Subregion)) +
   scale_color_brewer(palette = "Set1") + # not color-blind safe
@@ -137,12 +133,12 @@ ggplot() +
 ```r
 # Write table
 
-# write.csv(ceden.all.sf, "data/ceden_with_RR.csv") # Already printed to csv
+# write.csv(ceden.all.sf, "data/ceden_with_RR.csv") # Already printed to csv # This is essentially what is output from CEDENMod
 ```
 
 # Analysis
 
-## Organize Data
+## Organize Benthic Data
 
 I built a dataframe that grouped the data by station code and sample date so that each record is a sampling event. I summarized the number of taxa and counts by selected Orders and all Phylums. I also calculated the EPT and ETO indicies and taxa counts.
 
@@ -162,7 +158,7 @@ Orders:
 ##### summarise by taxa presence, number of taxa present, and indexes
 
 samp.df <- ceden.all.sf %>%
-  group_by(StationCode, SampleDate) %>%
+  group_by(StationCode, Date) %>%
   summarise(Subregion = first(Subregion),
             StationName = first(StationName),
             Project = first(Project),
@@ -210,7 +206,7 @@ tibble(samp.df) # 160 obsv
 
 ```
 ## # A tibble: 160 x 38
-##    StationCode SampleDate          Subregion StationName Project Projectcode
+##    StationCode Date                Subregion StationName Project Projectcode
 ##    <chr>       <dttm>              <chr>     <chr>       <chr>   <chr>      
 ##  1 510CR0036   2018-06-18 00:00:00 Sacramen~ Sacramento~ Nation~ EPA_NRSA_2~
 ##  2 510CR0322   2018-06-20 00:00:00 Sacramen~ Miner Slou~ Nation~ EPA_NRSA_2~
@@ -235,66 +231,25 @@ tibble(samp.df) # 160 obsv
 ```
 
 
-## Dataframe with one record for station
+## Organize Water Quality Data
 
-This dataframe is used for mapping.
+Updated to use the modified WQ data (already with RR joined and filtered)
 
-
-```r
-st.df <- ceden.all.sf %>%
-  group_by(StationCode) %>%
-  summarise(n(), n_distinct(SampleDate), first(Subregion)) %>%
-  rename(Subregion = `first(Subregion)`)
-```
-
-
-```r
-# Sample Stations Plot
-ggplot() +
-  geom_sf(data = USFE.riskregions) +
-  geom_sf(data = st.df, aes(color = Subregion)) +
-  scale_color_brewer(palette = "Set1") + # not color-blind safe
-  ggtitle("Ceden Benthic Sample Stations")
-```
-
-![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
-
-## Water Quality Data
-
+*Note: "Date" used in this dataset in lieu of SampleDate*
 
 ```r
 # Bring in WQ data
-ceden.wq <- read_excel("data/ceden_wq.xlsx")
+ceden.wq <- fread("https://github.com/WWU-IETC-R-Collab/CEDEN-mod/raw/main/Data/Output/CEDENMod_WQ.csv")
 
-#Remove records without lat/lon
-ceden.wq <- ceden.wq[!is.na(ceden.wq$TargetLatitude),]
-
-# Excel Data to sf Object: needs x, y, CRS
+# Convert to sf Object: needs x, y, CRS
 ceden.wq <- ceden.wq %>%
-  st_as_sf(coords=c("TargetLongitude", "TargetLatitude"), crs = crs.WGS84)
+  st_as_sf(coords=c("Longitude", "Latitude"), 
+           crs = "NAD83", remove = F) %>%
+  st_transform(., crs = crs.WGS84) # transform to projection other df are currently in
 
-# Spatial Join to add risk regions
-ceden.wq.sf <- st_join(ceden.wq, USFE.riskregions["Subregion"])
-
-# Remove records outside of Risk Regions
-ceden.wq.sf <- ceden.wq.sf %>%
-  filter(!is.na(Subregion))
+# CHECK GEOM
+# str(ceden.wq$geometry) # sfc_POINT - good
 ```
-
-
-```r
-# Basic plot
-ggplot() +
-  geom_sf(data = USFE.riskregions) +
-  geom_sf(data = ceden.wq.sf, aes(color = Subregion)) +
-  scale_color_brewer(palette = "Set1") + # not color-blind safe
-  ggtitle("Ceden WQ Data")
-```
-
-![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-9-1.png)<!-- -->
-
-
-## Organize Water Quality Data
 
 I created a dataframe that grouped by station name and sample date where each record is a water quality sampling event. This way the water quality sampling events can be matched up the the MI sampling events by location and timing.
 
@@ -316,12 +271,15 @@ The parameters included were:
 
 
 ```r
-wq.stations <- ceden.wq.sf %>%
-  group_by(StationName, SampleDate) %>%
+# While ceden.wq.sf is a sfc_POINT, after this process, wq.stations is a sfc_GEOM, which causes trouble with later analyses. Possible to remove sf prior to this process, or run this before make sf?
+
+wq.stations <- ceden.wq %>%
+  group_by(StationName, Date) %>%
   summarise(Project = first(Project),
             n = n(),
             Subregion = first(Subregion),
-            
+            Latitude = first(Latitude),
+            Longitude = first(Longitude),
             n_Alk = sum(Analyte == "Alkalinity as CaCO3, Total", na.rm = TRUE),
             mean_Alk = mean(Result[Analyte == "Alkalinity as CaCO3, Total"], na.rm = TRUE),
             sd_Alk = sd(Result[Analyte == "Alkalinity as CaCO3, Total"], na.rm = TRUE),
@@ -346,12 +304,17 @@ wq.stations <- ceden.wq.sf %>%
             min_Chl_TR = min(Result[Analyte == "Chlorine, Total Residual, Total"], na.rm = TRUE),
             max_Chl_TR = max(Result[Analyte == "Chlorine, Total Residual, Total"], na.rm = TRUE),
             
-            n_DO = sum(Analyte == "Oxygen, Dissolved, Total", na.rm = TRUE),
-            mean_DO = mean(Result[Analyte == "Oxygen, Dissolved, Total"], na.rm = TRUE),
-            sd_DO = sd(Result[Analyte == "Oxygen, Dissolved, Total"], na.rm = TRUE),
-            min_DO = min(Result[Analyte == "Oxygen, Dissolved, Total"], na.rm = TRUE),
-            max_DO = max(Result[Analyte == "Oxygen, Dissolved, Total"], na.rm = TRUE),
-            
+            n_DO = sum(Analyte == "Oxygen, Dissolved, Total", 
+                       na.rm = TRUE),
+            mean_DO = mean(Result[Analyte == "Oxygen, Dissolved, Total"], 
+                           na.rm = TRUE),
+            sd_DO = sd(Result[Analyte == "Oxygen, Dissolved, Total"], 
+                       na.rm = TRUE),
+            min_DO = min(Result[Analyte == "Oxygen, Dissolved, Total"], 
+                         na.rm = TRUE),
+            max_DO = max(Result[Analyte == "Oxygen, Dissolved, Total"], 
+                         na.rm = TRUE),
+
             n_pH = sum(Analyte == "pH", na.rm = TRUE),
             mean_pH = mean(Result[Analyte == "pH"], na.rm = TRUE),
             sd_pH = sd(Result[Analyte == "pH"], na.rm = TRUE),
@@ -381,15 +344,10 @@ wq.stations <- ceden.wq.sf %>%
             sd_Temp = sd(Result[Analyte == "Temperature"], na.rm = TRUE),
             min_Temp = min(Result[Analyte == "Temperature"], na.rm = TRUE),
             max_Temp = max(Result[Analyte == "Temperature"], na.rm = TRUE),
-            
+
             n_Turb = sum(Analyte == "Turbidity, Total", na.rm = TRUE),
-            mean_Turb = mean(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
-            sd_Turb = sd(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
-            min_Turb = min(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
-            max_Turb = max(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
-            
-            n_Turb = sum(Analyte == "Turbidity, Total", na.rm = TRUE),
-            mean_Turb = mean(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
+            mean_Turb = mean(Result[Analyte == "Turbidity, Total"], 
+                             na.rm = TRUE),
             sd_Turb = sd(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
             min_Turb = min(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
             max_Turb = max(Result[Analyte == "Turbidity, Total"], na.rm = TRUE),
@@ -399,9 +357,8 @@ wq.stations <- ceden.wq.sf %>%
             sd_Vel = sd(Result[Analyte == "Velocity"], na.rm = TRUE),
             min_Vel = min(Result[Analyte == "Velocity"], na.rm = TRUE),
             max_Vel = max(Result[Analyte == "Velocity"], na.rm = TRUE),
-            
             ) %>%
-  rename(SampleDate.wq = SampleDate)
+  rename(Date.wq = Date) # 3165 records
 
 ### Change infinities and NaN values to NA
 wq.stations <- wq.stations %>% 
@@ -409,48 +366,69 @@ wq.stations <- wq.stations %>%
   mutate_if(is.numeric, list(~na_if(., -Inf))) %>%
   mutate_if(is.numeric, list(~na_if(., "NaN"))) %>%
   mutate_if(is.numeric, list(~na_if(., NaN)))
+
+str(wq.stations$geometry) # sfc_POINT
 ```
 
 
 ```r
-## Join WBD to MI data
+## Join WBD to WQ data
 wq.stations <- st_join(wq.stations, HUC12["HUC12"]) 
-# 2133 obsv
-
-tibble(wq.stations)
+# Formerly 2133 obsv, now 3165 bc using CEDENMod_WQ
 ```
 
+## Dataframe with one record for station {.tabset}
+
+These dataframes are used for mapping.
+
+### Benthic
+
+```r
+# One record per Benthic Sample Station
+
+st.df <- ceden.all.sf %>%
+  group_by(StationCode) %>%
+  summarise(n(), n_distinct(Date), first(Subregion)) %>%
+  rename(Subregion = `first(Subregion)`)
 ```
-## # A tibble: 2,133 x 67
-##    StationName SampleDate.wq       Project     n Subregion n_Alk mean_Alk sd_Alk
-##    <chr>       <dttm>              <chr>   <int> <chr>     <int>    <dbl>  <dbl>
-##  1 209-6T      2014-02-28 00:00:00 CA Dep~     2 South De~     0       NA     NA
-##  2 209-6T      2014-03-26 00:00:00 CA Dep~     2 South De~     0       NA     NA
-##  3 209-6T      2015-04-07 00:00:00 CA Dep~     2 South De~     0       NA     NA
-##  4 209-6T      2016-12-15 00:00:00 CA Dep~     2 South De~     0       NA     NA
-##  5 209-6T      2017-01-18 00:00:00 CA Dep~     2 South De~     0       NA     NA
-##  6 28-ft RVTS~ 2014-02-26 00:00:00 CA Dep~     2 Sacramen~     0       NA     NA
-##  7 28-ft RVTS~ 2014-03-26 00:00:00 CA Dep~     2 Sacramen~     0       NA     NA
-##  8 Andrus Isl~ 2010-01-06 00:00:00 Delta ~     4 Central ~     0       NA     NA
-##  9 Andrus Isl~ 2010-01-27 00:00:00 Delta ~     4 Central ~     0       NA     NA
-## 10 Andrus Isl~ 2010-02-10 00:00:00 Delta ~     4 Central ~     0       NA     NA
-## # ... with 2,123 more rows, and 59 more variables: min_Alk <dbl>,
-## #   max_Alk <dbl>, n_N <int>, mean_N <dbl>, sd_N <dbl>, min_N <dbl>,
-## #   max_N <dbl>, n_Chl_F <int>, mean_Chl_F <dbl>, sd_Chl_F <dbl>,
-## #   min_Chl_F <dbl>, max_Chl_F <dbl>, n_Chl_TR <int>, mean_Chl_TR <dbl>,
-## #   sd_Chl_TR <dbl>, min_Chl_TR <dbl>, max_Chl_TR <dbl>, n_DO <int>,
-## #   mean_DO <dbl>, sd_DO <dbl>, min_DO <dbl>, max_DO <dbl>, n_pH <int>,
-## #   mean_pH <dbl>, sd_pH <dbl>, min_pH <dbl>, max_pH <dbl>, n_Sal <int>,
-## #   mean_Sal <dbl>, sd_Sal <dbl>, min_Sal <dbl>, max_Sal <dbl>, n_Secc <int>,
-## #   mean_Secc <dbl>, sd_Secc <dbl>, min_Secc <dbl>, max_Secc <dbl>,
-## #   n_Cond <int>, mean_Cond <dbl>, sd_Cond <dbl>, min_Cond <dbl>,
-## #   max_Cond <dbl>, n_Temp <int>, mean_Temp <dbl>, sd_Temp <dbl>,
-## #   min_Temp <dbl>, max_Temp <dbl>, n_Turb <int>, mean_Turb <dbl>,
-## #   sd_Turb <dbl>, min_Turb <dbl>, max_Turb <dbl>, n_Vel <int>, mean_Vel <dbl>,
-## #   sd_Vel <dbl>, min_Vel <dbl>, max_Vel <dbl>, geometry <POINT [°]>,
-## #   HUC12 <chr>
+
+
+```r
+# Sample Stations Plot
+ggplot() +
+  geom_sf(data = USFE.riskregions) +
+  geom_sf(data = st.df, aes(color = Subregion)) +
+  scale_color_brewer(palette = "Set1") + # not color-blind safe
+  ggtitle("Ceden Benthic Sample Stations")
 ```
-## Original Method: Combine Benthic and WQ Data using buffers
+
+![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-10-1.png)<!-- -->
+
+### Water Quality
+
+
+```r
+# One record per Benthic Sample Station
+
+wq.df <- ceden.wq %>%
+  group_by(StationCode) %>%
+  summarise(n(), n_distinct(Date), first(Subregion)) %>%
+  rename(Subregion = `first(Subregion)`)
+```
+
+
+```r
+# Sample Stations Plot
+ggplot() +
+  geom_sf(data = USFE.riskregions) +
+  geom_sf(data = wq.df, aes(color = Subregion)) +
+  scale_color_brewer(palette = "Set1") + # not color-blind safe
+  ggtitle("Ceden WQ Sample Stations")
+```
+
+![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-12-1.png)<!-- -->
+
+## Join MI and WQ data
 
 ### Transform Projection to UTM Zone 10n
 
@@ -462,9 +440,12 @@ This transform allows us to compare distances and create buffers. I created a 50
 
 # Transform into UTM Zone 10n EPSG:26910
 wq.stations <- st_transform(wq.stations, 26910)
-st.df.u10 <- st_transform(st.df, 26910)
-rr.u10 <- st_transform(USFE.riskregions, 26910)
+wq.df.u10 <- st_transform(wq.df, 26910)
+
 samp.df.u10 <- st_transform(samp.df, 26910)
+st.df.u10 <- st_transform(st.df, 26910)
+
+rr.u10 <- st_transform(USFE.riskregions, 26910)
 
 ### Create 500m buffer around WQ sampling locations
 wq.stations.buffer <- st_buffer(wq.stations, 1000) # buffer is 1000 meters
@@ -478,7 +459,9 @@ wq.stations.buffer <- st_buffer(wq.stations, 1000) # buffer is 1000 meters
 #filter(!is.na(Subregion))
 ```
 
-### Plot WQ buffers and ceden benthic data
+### Original: Join using buffers
+
+#### Plot WQ buffers and ceden benthic data
 
 
 ```r
@@ -491,11 +474,9 @@ ggplot() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 ```
 
-![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-13-1.png)<!-- -->
+![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-14-1.png)<!-- -->
 
-### Join Datasets
-
-#### Using Buffers then filtering to same dates and Watershed Boundaries (HUC12)
+#### Join on Buffers & filter to same date & watershed
 
 
 ```r
@@ -504,7 +485,7 @@ samp.wq.com <- st_join(samp.df.u10, wq.stations.buffer) #2517 records when buffe
 
 ### Select records that have sampling data from the same date for benthic and WQ
 com.dates <- samp.wq.com %>%
-  filter(SampleDate == SampleDate.wq) #83 results (when radius = 2k or 3k m), retains multiple matches of WQ per Benthic
+  filter(Date == Date.wq) #83 results (when radius = 2k or 3k m), retains multiple matches of WQ per Benthic
 
 com.dates.HUC <- com.dates %>%
   filter(HUC12.x == HUC12.y) #83 results (when radius = 2k or 3k m)
@@ -517,7 +498,7 @@ Yes, multiple matches were retained -> reduced to 58 unique records. The results
 
 ```r
 check <- com.dates.HUC[,1:3] %>%
-  group_by(StationCode, SampleDate) %>%
+  group_by(StationCode, Date) %>%
   summarise(n()) # 58 matches
 ```
 
@@ -532,27 +513,27 @@ ggplot() +
   ggtitle("Ceden Benthic Data with WQ on same date")
 ```
 
-![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-16-1.png)<!-- -->
+![](CEDEN_Benthic_Data_WBD_files/figure-html/unnamed-chunk-17-1.png)<!-- -->
 
 ```r
 tibble(com.dates.HUC)
 ```
 
 ```
-## # A tibble: 74 x 104
-##    StationCode SampleDate          Subregion.x StationName.x Project.x
+## # A tibble: 102 x 106
+##    StationCode Date                Subregion.x StationName.x Project.x
 ##    <chr>       <dttm>              <chr>       <chr>         <chr>    
-##  1 510STODWx   2014-06-18 00:00:00 Sacramento~ Stone Lakes   EPA 104b~
-##  2 543R00137   2012-05-15 00:00:00 Confluence  Deer Cr_137-~ CCCWP Cr~
-##  3 543R01103   2015-04-21 00:00:00 Confluence  West Antioch~ CCCWP Cr~
-##  4 544CCC001   2011-06-06 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
-##  5 544CCC001   2011-07-06 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
-##  6 544CCC001   2011-08-19 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
-##  7 544CCC001   2011-09-20 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
-##  8 544CCC001   2011-10-17 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
-##  9 544CCC003   2011-06-06 00:00:00 Central De~ Old River at~ RWB5 Cle~
-## 10 544CCC003   2011-07-06 00:00:00 Central De~ Old River at~ RWB5 Cle~
-## # ... with 64 more rows, and 99 more variables: Projectcode <chr>,
+##  1 510CR1007   2013-06-03 00:00:00 Sacramento~ Sacramento R~ National~
+##  2 510L12105   2012-07-11 00:00:00 Sacramento~ Lake Greenha~ SWAMP Na~
+##  3 510STODWx   2014-06-18 00:00:00 Sacramento~ Stone Lakes   EPA 104b~
+##  4 543R00137   2012-05-15 00:00:00 Confluence  Deer Cr_137-~ CCCWP Cr~
+##  5 543R01103   2015-04-21 00:00:00 Confluence  West Antioch~ CCCWP Cr~
+##  6 544CCC001   2011-06-06 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
+##  7 544CCC001   2011-07-06 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
+##  8 544CCC001   2011-08-19 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
+##  9 544CCC001   2011-09-20 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
+## 10 544CCC001   2011-10-17 00:00:00 Confluence  San Joaquin ~ RWB5 Cle~
+## # ... with 92 more rows, and 101 more variables: Projectcode <chr>,
 ## #   n_taxa <int>, n_E <int>, n_P <int>, n_T <int>, n_O <int>, n_D <int>,
 ## #   n_Phylum_NA <int>, n_Arthropoda <int>, n_Annelida <int>, n_Nematoda <int>,
 ## #   n_Ectoprocta <int>, n_Bacillariophyta <int>, n_Cryptophyta <int>,
@@ -562,21 +543,21 @@ tibble(com.dates.HUC)
 ## #   n_Euglenozoa <int>, n_Streptophyta <int>, n_Rhodophyta <int>,
 ## #   n_Chordata <int>, geometry <POINT [m]>, EPT_taxa <int>, EPT_index <dbl>,
 ## #   ETO_taxa <int>, ETO_index <dbl>, HUC12.x <chr>, StationName.y <chr>,
-## #   SampleDate.wq <dttm>, Project.y <chr>, n <int>, Subregion.y <chr>,
-## #   n_Alk <int>, mean_Alk <dbl>, sd_Alk <dbl>, min_Alk <dbl>, max_Alk <dbl>,
-## #   n_N <int>, mean_N <dbl>, sd_N <dbl>, min_N <dbl>, max_N <dbl>,
-## #   n_Chl_F <int>, mean_Chl_F <dbl>, sd_Chl_F <dbl>, min_Chl_F <dbl>,
-## #   max_Chl_F <dbl>, n_Chl_TR <int>, mean_Chl_TR <dbl>, sd_Chl_TR <dbl>,
-## #   min_Chl_TR <dbl>, max_Chl_TR <dbl>, n_DO <int>, mean_DO <dbl>, sd_DO <dbl>,
-## #   min_DO <dbl>, max_DO <dbl>, n_pH <int>, mean_pH <dbl>, sd_pH <dbl>,
-## #   min_pH <dbl>, max_pH <dbl>, n_Sal <int>, mean_Sal <dbl>, sd_Sal <dbl>,
-## #   min_Sal <dbl>, max_Sal <dbl>, n_Secc <int>, mean_Secc <dbl>, sd_Secc <dbl>,
-## #   min_Secc <dbl>, max_Secc <dbl>, n_Cond <int>, mean_Cond <dbl>,
-## #   sd_Cond <dbl>, min_Cond <dbl>, max_Cond <dbl>, n_Temp <int>,
-## #   mean_Temp <dbl>, sd_Temp <dbl>, min_Temp <dbl>, max_Temp <dbl>,
-## #   n_Turb <int>, mean_Turb <dbl>, sd_Turb <dbl>, min_Turb <dbl>,
-## #   max_Turb <dbl>, n_Vel <int>, mean_Vel <dbl>, sd_Vel <dbl>, min_Vel <dbl>,
-## #   max_Vel <dbl>, HUC12.y <chr>
+## #   Date.wq <date>, Project.y <chr>, n <int>, Subregion.y <chr>,
+## #   Latitude <dbl>, Longitude <dbl>, n_Alk <int>, mean_Alk <dbl>, sd_Alk <dbl>,
+## #   min_Alk <dbl>, max_Alk <dbl>, n_N <int>, mean_N <dbl>, sd_N <dbl>,
+## #   min_N <dbl>, max_N <dbl>, n_Chl_F <int>, mean_Chl_F <dbl>, sd_Chl_F <dbl>,
+## #   min_Chl_F <dbl>, max_Chl_F <dbl>, n_Chl_TR <int>, mean_Chl_TR <dbl>,
+## #   sd_Chl_TR <dbl>, min_Chl_TR <dbl>, max_Chl_TR <dbl>, n_DO <int>,
+## #   mean_DO <dbl>, sd_DO <dbl>, min_DO <dbl>, max_DO <dbl>, n_pH <int>,
+## #   mean_pH <dbl>, sd_pH <dbl>, min_pH <dbl>, max_pH <dbl>, n_Sal <int>,
+## #   mean_Sal <dbl>, sd_Sal <dbl>, min_Sal <dbl>, max_Sal <dbl>, n_Secc <int>,
+## #   mean_Secc <dbl>, sd_Secc <dbl>, min_Secc <dbl>, max_Secc <dbl>,
+## #   n_Cond <int>, mean_Cond <dbl>, sd_Cond <dbl>, min_Cond <dbl>,
+## #   max_Cond <dbl>, n_Temp <int>, mean_Temp <dbl>, sd_Temp <dbl>,
+## #   min_Temp <dbl>, max_Temp <dbl>, n_Turb <int>, mean_Turb <dbl>,
+## #   sd_Turb <dbl>, min_Turb <dbl>, max_Turb <dbl>, n_Vel <int>, mean_Vel <dbl>,
+## #   sd_Vel <dbl>, min_Vel <dbl>, max_Vel <dbl>, ...
 ```
 
 
