@@ -1,0 +1,166 @@
+---
+title: "ZOOP_Analysis"
+author: "Erika W"
+date: "7/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning = F, }
+rm(list=ls())
+library(tidyverse)
+library(sf)
+library(here)
+library(readxl)
+library(ggplot2)
+library(vegan)
+library(data.table)
+library(lubridate)
+
+# packages b/c accessing private repo
+library(httr)
+library(tidyverse)
+library(gh)
+library(gitcreds)
+```
+
+## Introduction
+
+**Zoop Data**
+Like the raw CEDEN & SURF datasets, is too large to load onto GitHub. Zoop data was downloaded from...
+
+[Insert URL and access specifications here]
+
+Data Files within the downloaded ZoopSynth folder are:
+
+* **EMP:** This contains the zooplankton data that I'll assess here. The Zooplankton Study is one element of the Environmental Monitoring Program (EMP). The EMP also includes monitoring of water quality, benthos, and phytoplankton. The Zooplankton Study monitors abundance and distribution of mysid shrimp and 
+zooplankton; which are important food organisms for larval, juvenile, and small fishes, including delta smelt, juvenile salmon, striped bass, and small splittail. 
+
+* **20mm:** Results of 20-mm Survey aimed to provide information on delta smelt abundance and distribution in the USFE. Data collected: temperature, electro-conductivity, water transparency, turbidity, water volume, tidal stage, fish, and zooplankton.
+
+* **FMWT:** Contains approximate weights for a number of inverts 
+
+* **FRP:** Data from teh Fish Restoration Program (FRP) Monitoring Team, observing restored tidal wetlands within the Delta.
+
+* **TNS:** Townnet Survey (TNS) data for Striped Bass (Morone saxatilis) aka Summer Townnet Survet (STN). STN enumerates all fishes and several invertebrate species.
+
+## EMP Zooplankton 
+
+According to the EMP metadata:
+
+N = the total number of each taxon per cubic meter of water sampled 
+
+CPUE = Catch-per-unit-effort (CPUE) for taxa efficiently sampled by that gear
+
+```{r}
+# EMP data is downloaded as three files, one for each data collection method. For information on size class captured by each of these methods, refer to: ZoopSynth/EMP/ZooplanktonMetadataAug2020.pdf
+
+ZoopEMP_CB <- fread("ZoopSynth/EMP/1972-2019CBMatrix.xlsx")
+
+  mutate(Date = as.Date(Date, format="%Y-%m-%d")) %>%
+  filter(between(Date, 
+        as_date("2009-10-01"),as_date("2019-09-30")))
+
+ZoopEMP_Mysid <- fread("ZoopSynth/EMP/1972-2019MysidMatrix.csv")
+ZoopEMP_Pump <- fread("ZoopSynth/EMP/1972-2019PumpMatrix.csv")
+```
+
+
+#### data-_V1.1.0_2020-09-09.csv
+THIS FILE IS NOT THE ACTUAL CATCH DATA - but does contain useful information (lat-long) that appears to be missing in teh downloaded EMP data that actually HAS data :D
+
+"Station NZ" in EMP == "Station" in Zoop
+
+
+Can merge to reclaim lat and long into data file. 
+```{r}
+Zoop<- fread("ZoopSynth/data-_V1.1.0_2020-09-09.csv") 
+# Starts with 1481685 records
+
+# Remove records without coordinates (now 1469919 records)
+Zoop <- Zoop %>%
+  filter(!is.na(Latitude)) %>%
+  filter(!is.na(Longitude)) #
+
+# Correct Date format & remove records outside time frame (now 849910 records)
+
+Zoop <- Zoop %>% 
+  mutate(Date = as.Date(Date, format="%Y-%m-%d")) %>%
+  filter(between(Date, 
+        as_date("2009-10-01"),as_date("2019-09-30"))) # filter dates before transform to sf, otherwise errors arise.
+
+min(Zoop$Date)
+max(Zoop$Date)
+
+# Structure as shapefile
+Zoop.sf <- st_as_sf(Zoop, coords = c("Longitude", "Latitude"), remove = F, crs = "WGS84") 
+```
+
+**Risk Regions**
+I would like to read the shapefile from the same URL, but privatization issues persist. The USFE risk regions are loaded from the local repository
+
+```{r}
+# From local
+USFE.riskregions <- here("data/RiskRegions_DWSC_Update_9292020.shp") %>%
+  st_read()
+```
+
+```{r, eval = FALSE}
+## OLD METHOD - UPDATE FOR PRIVATE REPO ACCESS?
+
+### Load Risk Regions from GitHub CEDEN repository (change if moved)
+
+USFE.RiskRegions.z <- "https://github.com/WWU-IETC-R-Collab/CEDEN-mod/raw/main/Data/USFE_RiskRegions_9292020.zip"
+
+unzip_shape <- function(InputShapeZip){
+  dl.temp <- tempfile() # Create local temp file for zipped shapefile
+  dl.temp2 <- tempfile() # Create a second local temp file to store unzipped shapefile
+  download.file(InputShapeZip, dl.temp, quiet=T) # Downloads zip file from InputShape
+  unzip(zip = dl.temp, exdir = dl.temp2) # Unzips zip file
+  shapefile.out <-list.files(dl.temp2, pattern = ".shp$",full.names=TRUE) # stores file path of files with .shp ext in dl.temp2
+  sf::st_read(shapefile.out) # Reads shapefile as sf object
+}
+
+USFE.RiskRegions <- unzip_shape(USFE.RiskRegions.z) # CRS is WGS 84
+```
+
+### Spatial Filter Zoop Data
+
+```{r}
+#### Spatially query data within the project boundaries
+Zoop.sf <- st_join(Zoop.sf, USFE.riskregions[1], left = T) %>%
+  filter(!is.na(Subregion)) 
+
+# Results in 750697 records
+```
+```{r}
+
+head(Zoop)
+
+Wide.Zoop <- Zoop.sf %>%
+  group_by(Date, Latitude, Longitude) %>%
+  summarize(Subregion = first(Subregion),
+            Mean = mean(Result, na.rm = T)) %>%
+  pivot_wider(names_from = Phylum,
+              names_repair = "check_unique",
+              values_from = Mean)
+```
+
+
+
+
+
+
+
+```{r}
+# Plot to check how it's working
+ggplot() +
+  geom_sf(data = USFE.riskregions, fill = NA) +
+  geom_sf(data = Zoop.sf[c(1:20, 5000:5020, 10000:10020, 150000:150020, 200000:200020, 250000:250020, 700000:700100),], aes(color = Source)) +
+  scale_color_brewer(palette = "Set1") + # not color-blind safe
+  ggtitle("Zoop Data by SizeClass")
+```
+
